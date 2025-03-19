@@ -1,0 +1,21 @@
+name: downscaleToPoint
+channels:
+  - conda-forge
+dependencies:
+  - r-base=4.4.2
+  - r-mgcv=1.9_1
+  - r-sf=1.0_19
+  - r-data.table=1.17.0
+  - r-geosphere=1.5_20
+  - r-forecast=8.23.0
+  - r-matrixstats=1.5.0
+  - r-mass=7.3_64
+  - r-ggplot2
+  - r-hexbin
+  - r-here
+  - r-abind
+  - r-purrr
+  - r-progress
+  - r-pdftools
+  - r-rnaturalearth
+  - r-scico
