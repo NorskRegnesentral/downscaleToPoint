@@ -22,6 +22,12 @@ image_dir = file.path(data_dir, "images")
 local_fits_dir = file.path(model_dir, "local_fits")
 cv_dir = file.path(data_dir, "cross-validation", "temperature")
 
+if (!dir.exists(model_dir)) dir.create(model_dir, recursive = TRUE)
+if (!dir.exists(result_dir)) dir.create(result_dir)
+if (!dir.exists(image_dir)) dir.create(image_dir)
+if (!dir.exists(local_fits_dir)) dir.create(local_fits_dir)
+if (!dir.exists(cv_dir)) dir.create(cv_dir, recursive = TRUE)
+
 meta_path = file.path(data_dir, "meta.rds")
 global_fit_path = file.path(model_dir, "global.rds")
 

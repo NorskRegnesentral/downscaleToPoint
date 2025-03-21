@@ -9,6 +9,7 @@ library(downscaleToPoint)
 # ------------------------------------------------------------------------------
 data_dir = file.path(here::here(), "raw_data")
 image_dir = file.path(data_dir, "images")
+if (!dir.exists(image_dir)) dir.create(image_dir)
 
 meta_path = file.path(data_dir, "meta.rds")
 
