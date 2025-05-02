@@ -10,6 +10,7 @@ dependencies:
   - r-forecast=8.23.0
   - r-matrixstats=1.5.0
   - r-mass=7.3_64
+  - r-dplyr=1.1.4
   - r-ggplot2
   - r-hexbin
   - r-here
@@ -19,3 +20,4 @@ dependencies:
   - r-pdftools
   - r-rnaturalearth
   - r-scico
+  - r-patchwork
