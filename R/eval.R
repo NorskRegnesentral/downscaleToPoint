@@ -1,6 +1,7 @@
 
+#' Estimate the (possibly weighted) IQD between x and y, using numerical integration
 #' @export
-iqd = function(x, y, w = function(x) 1, rm_zero = FALSE, upper_prob = 1) {
+iqd = function(x, y, w = function(x) 1, rm_zero = FALSE) {
   if (rm_zero) {
     x = x[x > 0]
     y = y[y > 0]
@@ -8,11 +9,7 @@ iqd = function(x, y, w = function(x) 1, rm_zero = FALSE, upper_prob = 1) {
   F = ecdf(x)
   G = ecdf(y)
   lower = min(c(x, y), na.rm = TRUE)
-  if (upper_prob < 1) {
-    upper = quantile(c(x, y), upper_prob, na.rm = TRUE)
-  } else {
-    upper = max(c(x, y), na.rm = TRUE)
-  }
+  upper = max(c(x, y), na.rm = TRUE)
   xx = seq(lower, upper, length.out = 500)
   delta_xx = xx[2] - xx[1]
   w_vals = w(xx)

@@ -6,7 +6,7 @@
 \usage{
 load_station_data(
   meta,
-  station_dir,
+  data_dir,
   verbose = FALSE,
   rm_bad_flags = FALSE,
   bad_flag_start = "H",
