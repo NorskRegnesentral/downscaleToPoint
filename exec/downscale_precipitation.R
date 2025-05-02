@@ -12,18 +12,18 @@ library(MASS)
 library(parallel)
 library(purrr)
 library(downscaleToPoint)
+library(patchwork)
+library(dplyr)
 
 # Define all necessary paths
 # ------------------------------------------------------------------------------
 data_dir = file.path(here::here(), "raw_data")
 model_dir = file.path(data_dir, "models", "precipitation")
-result_dir = file.path(data_dir, "results")
 image_dir = file.path(data_dir, "images")
 local_fits_dir = file.path(model_dir, "local_fits")
 cv_dir = file.path(data_dir, "cross-validation", "precipitation")
 
 if (!dir.exists(model_dir)) dir.create(model_dir, recursive = TRUE)
-if (!dir.exists(result_dir)) dir.create(result_dir)
 if (!dir.exists(image_dir)) dir.create(image_dir)
 if (!dir.exists(local_fits_dir)) dir.create(local_fits_dir)
 if (!dir.exists(cv_dir)) dir.create(cv_dir, recursive = TRUE)
@@ -36,7 +36,10 @@ global_fit_path = file.path(model_dir, "global.rds")
 n_cores = 8 # Number of cores to use for running code in parallel
 n_sims = 150 # Number of ensembles to simulate during the downscaling
 diff_lengths = c(1, 3, 7) # Which n-day-differences to evaluate in the cross-validation
-zero_thresholds = c(0, .01, .1) # Different precipitation thresholds for defining a day as dry
+zero_thresholds = c(0, .1, .5, 1) # Different precipitation thresholds for defining a day as dry
+
+# Thresholds for computing threshold weighted IQD scores during the cross-validation
+threshold_probs = c(.8, .9, .95, .99)
 
 # K is the number of neighbours to use for simulating precipitation at an unknown location.
 # K_vals is the vector of all values of K we will test during the cross-validation experiment
@@ -47,8 +50,8 @@ K_vals = c(5, 10, 15, 20, 25, 30)
 score_info = as.data.frame(t(do.call(cbind, list(
   c("rmse", "RMSE", 1),
   c("mae", "MAE", 1),
-  c("zero_probs_se", "ZP", 1),
-  c("zero_probs_se", "ZP01", 3),
+  c("zero_probs_se", "ZP01", 2),
+  c("zero_probs_se", "ZP1", 4),
   c("iqd", "IQD", 1),
   c("weekly_mean_iqd", "WM", 1),
   c("weekly_sd_iqd", "WS", 1),
@@ -63,7 +66,7 @@ score_info$row_index = as.integer(score_info$row_index)
 
 # Load the meta data
 # ------------------------------------------------------------------------------
-station_meta = readRDS(file.path(data_dir, "meta.rds"))
+station_meta = readRDS(meta_path)
 
 # Remove stations with few precipitation observations
 station_meta = station_meta[n_precip > 200]
@@ -601,6 +604,29 @@ for (K in K_vals) {
       sims_iqd = sapply(sims, function(x) iqd(as.vector(x), y = data$precip, rm_zero = TRUE))
       res$iqd = list(c(era = era_iqd, sims_iqd))
 
+      # Compute threshold weighted IQD
+      thresholds = quantile(data$precip[data$precip > 0], threshold_probs)
+      n_obs_above_thresholds = sapply(thresholds, function(t) sum(data$precip >= t))
+      era_tw_iqd = sapply(
+        X = thresholds,
+        FUN = function(threshold) {
+          iqd(data$era_precip, data$precip, w = function(x) as.numeric(x >= threshold), rm_zero = TRUE)
+        }
+      )
+      sim_tw_iqd = sapply(
+        X = sims,
+        FUN = function(sim) {
+          sapply(
+            X = thresholds,
+            FUN = function(threshold) {
+              iqd(sim, data$precip, w = function(x) as.numeric(x >= threshold), rm_zero = TRUE)
+            }
+          )
+        }
+      )
+      res$tw_iqd = list(cbind(era = era_tw_iqd, sim_tw_iqd))
+      res$n_obs_above_thresholds = list(n_obs_above_thresholds)
+
       # Compare marginal distributions for all n-day differences, with n in `diff_lengths`
       # This is easiest to do if we first expand `data` so it contains one row for every
       # single date within `range(data$date)`
@@ -826,7 +852,7 @@ plot = bootstrap_data[K1 > K0][, let(
 plot_tikz(
   file = file.path(image_dir, "precip_K_scores.pdf"),
   plot = plot,
-  width = 11,
+  width = 12,
   height = 8
 )
 
@@ -896,7 +922,7 @@ plot = bootstrap_data[
 plot_tikz(
   file = file.path(image_dir, "precip_scores.pdf"),
   plot = plot,
-  width = 11,
+  width = 12,
   height = 5
 )
 
@@ -975,7 +1001,7 @@ plot_tikz(
   file = file.path(image_dir, "precip_map_scores.pdf"),
   tex_engine = "lualatex",
   plot = plot,
-  width = 12,
+  width = 11,
   height = 8
 )
 
@@ -983,6 +1009,192 @@ plot_tikz(
 pdf_convert(
   in_path = file.path(image_dir, "precip_map_scores.pdf"),
   out_paths = file.path(image_dir, "precip_map_scores.png"),
+  format = "png"
+)
+
+# Create a map plot for raw RMSE and MAE values
+# ------------------------------------------------------------------------------
+
+rmse_data = as.data.table(do.call(rbind, eval[K == chosen_K, rmse]))
+mae_data = as.data.table(do.call(rbind, eval[K == chosen_K, mae]))
+rmse_data = rmse_data[, .(full, era)][, let(id = eval[K == chosen_K, id], tag = "rmse")]
+mae_data = mae_data[, .(full, era)][, let(id = eval[K == chosen_K, id], tag = "mae")]
+
+plot_data = rbind(
+  melt(rmse_data, id.vars = c("id", "tag")),
+  melt(mae_data, id.vars = c("id", "tag"))
+)
+plot_data[, let(both = list(c(value[variable == "full"], value[variable == "era"]))), by = c("id", "tag")]
+plot_data = merge(plot_data, station_meta[, .(id, lon, lat, elev)], by = "id")
+
+precip_data = load_station_data(
+  meta = station_meta,
+  data_dir = data_dir,
+  verbose = TRUE,
+  era_stats = TRUE,
+  rm_bad_flags = TRUE
+)
+precip_data = precip_data[, .(precip = mean(precip), era_precip = mean(era_precip)), by = .(yday(date), id)]
+precip_data = precip_data[, .(precip = sum(precip), era_precip = sum(era_precip)), by = "id"]
+plot_data = merge(plot_data, precip_data[, .(id, precip, era_precip)], by = "id")
+plot_data[, let(precip_diff = precip - era_precip)]
+
+plot_data = st_as_sf(
+  plot_data,
+  coords = c("lon", "lat"),
+  crs = st_crs(4326)
+)
+plot_data$lon = st_coordinates(plot_data)[, 1]
+plot_data$lat = st_coordinates(plot_data)[, 2]
+plot_data$tag = factor(plot_data$tag, levels = score_info$name, labels = score_info$shortname)
+plot_data$variable = factor(plot_data$variable, levels = c("full", "era"), labels = c("Full", "ERA5"))
+
+map = rnaturalearth::ne_countries(returnclass = "sf", scale = 110)
+
+pseudo_log_transform = scales::new_transform(
+  name = "pseudo_log",
+  transform = function(x) asinh(x * 10),
+  inverse = function(x) sinh(x) / 10
+)
+
+# Function for computing the proper skill score value inside each hexagon
+skill_score_hex_func = function(x) {
+  s1 = mean(sapply(x, `[[`, 1))
+  s0 = mean(sapply(x, `[[`, 2))
+  res = skill_score(s1 = s1, s0 = s0)
+  res
+}
+
+plots = list()
+for (t in unique(plot_data$tag)) {
+  for (v in unique(plot_data$variable)) {
+    plots[[length(plots) + 1]] = ggplot() +
+      geom_sf(data = map) +
+      stat_summary_hex(
+        data = dplyr::filter(plot_data, tag == t, variable == v),
+        aes(x = lon, y = lat, z = value),
+        bins = 15
+      ) +
+      geom_sf(data = map, fill = NA) +
+      labs(x = "", y = "",
+           fill = t,
+           title = paste0(v, ", ", t)) +
+      scale_fill_viridis_c(
+        option = if (t == "MAE") "D" else "D",
+        limits = if (t == "MAE") c(0, 5) else c(2, 13),
+        breaks = seq(0, 20, by = 2)
+      )
+  }
+  plots[[length(plots) + 1]] = ggplot() +
+    geom_sf(data = map) +
+    stat_summary_hex(
+      fun = skill_score_hex_func,
+      data = dplyr::filter(plot_data, tag == t, variable == v),
+      aes(x = lon, y = lat, z = both),
+      bins = 15
+    ) +
+    geom_sf(data = map, fill = NA) +
+    labs(x = "", y = "",
+         fill = "Skill",
+         title = paste0(t, " skill score")) +
+    scale_fill_scico(
+      palette = "vik",
+      limits = c(-.6, .6),
+      transform = pseudo_log_transform,
+      breaks = c(-.5, -.2, 0, .2, .5),
+      labels = paste0("$", c(-.5, -.2, 0, .2, .5), "$")
+    )
+}
+
+plots[[length(plots) + 1]] = ggplot() +
+  geom_sf(data = map) +
+  stat_summary_hex(
+    fun = mean,
+    data = dplyr::filter(plot_data, tag == tag[1], variable == variable[1]),
+    aes(x = lon, y = lat, z = precip),
+    bins = 15
+  ) +
+  geom_sf(data = map, fill = NA) +
+  labs(x = "", y = "",
+       fill = "Precipitation",
+       title = "Mean annual\nprecipitation") +
+  scale_fill_viridis_c(breaks = c(500, 1000, 1500))
+
+plots[[length(plots) + 1]] = ggplot() +
+  geom_sf(data = map) +
+  stat_summary_hex(
+    fun = mean,
+    data = dplyr::filter(plot_data, tag == tag[1], variable == variable[1]),
+    aes(x = lon, y = lat, z = elev),
+    bins = 15
+  ) +
+  geom_sf(data = map, fill = NA) +
+  labs(x = "", y = "",
+       fill = "Elevation",
+       title = "Station elevation"
+       ) +
+  scale_fill_viridis_c()
+
+for (i in seq_along(plots)) {
+  plots[[i]] = plots[[i]] +
+    coord_sf(
+      xlim = st_bbox(plot_data)[c(1, 3)] + c(-.5, 1.5),
+      ylim = st_bbox(plot_data)[c(2, 4)] + c(-1, 1),
+      crs = st_crs(plot_data)
+    ) +
+    scale_x_continuous(
+      breaks = seq(-20, 40, by = 20),
+      labels = paste0("$", c(20, 0, 20, 40), "^\\circ$", c("W", "", "E", "E")),
+      minor_breaks = seq(-10, 30, by = 10)
+    ) +
+    scale_y_continuous(
+      breaks = seq(40, 70, by = 10),
+      labels = paste0("$", seq(40, 70, by = 10), "^\\circ$N"),
+      minor_breaks = seq(35, 65, by = 10)
+    ) +
+    theme_light() +
+    theme(
+      strip.text = element_text(colour = "black", size = rel(.8)),
+      text = element_text(size = 18),
+      strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0"),
+      title = element_text(size = rel(.8)),
+      legend.text = element_text(size = rel(.5)),
+      legend.position = "bottom"
+    ) +
+    if (i %in% c(3, 6)) {
+      theme(legend.text = element_text(size = rel(.5), angle = 70, vjust = .5))
+    } else {
+      theme(legend.text = element_text(size = rel(.5)))
+    }
+}
+
+
+plot_design = "
+##bbddff
+aabbddff
+aacceegg
+##cceegg
+"
+
+plot = patchwork::wrap_plots(
+  plots[c(7, 1, 4, 2, 5, 3, 6)],
+  design = plot_design,
+  guides = "collect"
+)
+plot = plot & theme(legend.position = "bottom")
+
+plot_tikz(
+  file = file.path(image_dir, "precip_map_scores2.pdf"),
+  tex_engine = "lualatex",
+  plot = plot,
+  width = 13,
+  height = 7
+)
+
+# Convert the plot to png, to reduce the size of the final paper 
+pdf_convert(
+  in_path = file.path(image_dir, "precip_map_scores2.pdf"),
+  out_paths = file.path(image_dir, "precip_map_scores2.png"),
   format = "png"
 )
 

@@ -42,12 +42,18 @@ B = 1000 # Number of bootstraps to use when bootstrapping
 # K_vals is the vector of all values of K we will test during the cross-validation experiment
 K_vals = c(5, 10, 15, 20, 25, 30)
 
+# Thresholds for computing threshold weighted IQD scores during the cross-validation
+upper_threshold_probs = c(.8, .9, .95, .99)
+lower_threshold_probs = c(.2, .1, .05, .01)
+
 # This is a data.frame containing information about all the different scoring functions
 # we want to evaluate in the cross-validation study
 score_info = as.data.frame(t(do.call(cbind, list(
   c("rmse", "RMSE", 1),
   c("mae", "MAE", 1),
   c("iqd", "IQD", 1),
+  #c("lower_tw_iqd", "IQD95", 3),
+  #c("upper_tw_iqd", "IQD05", 3),
   c("weekly_mean_iqd", "WM", 1),
   c("weekly_sd_iqd", "WS", 1),
   c("monthly_mean_iqd", "MM", 1),
@@ -61,7 +67,7 @@ score_info$row_index = as.integer(score_info$row_index)
 
 # Load the meta data
 # ------------------------------------------------------------------------------
-station_meta = readRDS(file.path(data_dir, "meta.rds"))
+station_meta = readRDS(meta_path)
 
 # Remove stations with few temperature observations
 station_meta = station_meta[n_tmean > 200]
@@ -464,6 +470,51 @@ for (K in K_vals) {
       sims_iqd = sapply(sims, function(x) iqd(as.vector(x), y = data$tmean))
       res$iqd = list(c(era = era_iqd, sims_iqd))
 
+      # Compute threshold weighted IQD
+      upper_thresholds = quantile(data$tmean, upper_threshold_probs)
+      n_obs_above_upper_thresholds = sapply(upper_thresholds, function(t) sum(data$tmean >= t))
+      era_upper_tw_iqd = sapply(
+        X = upper_thresholds,
+        FUN = function(threshold) {
+          iqd(data$era_tmean, data$tmean, w = function(x) as.numeric(x >= threshold))
+        }
+      )
+      sim_upper_tw_iqd = sapply(
+        X = sims,
+        FUN = function(sim) {
+          sapply(
+            X = upper_thresholds,
+            FUN = function(threshold) {
+              iqd(sim, data$tmean, w = function(x) as.numeric(x >= threshold))
+            }
+          )
+        }
+      )
+      res$upper_tw_iqd = list(cbind(era = era_upper_tw_iqd, sim_upper_tw_iqd))
+      res$n_obs_above_upper_thresholds = list(n_obs_above_upper_thresholds)
+
+      lower_thresholds = quantile(data$tmean, lower_threshold_probs)
+      n_obs_below_lower_thresholds = sapply(lower_thresholds, function(t) sum(data$tmean <= t))
+      era_lower_tw_iqd = sapply(
+        X = lower_thresholds,
+        FUN = function(threshold) {
+          iqd(data$era_tmean, data$tmean, w = function(x) as.numeric(x <= threshold))
+        }
+      )
+      sim_lower_tw_iqd = sapply(
+        X = sims,
+        FUN = function(sim) {
+          sapply(
+            X = lower_thresholds,
+            FUN = function(threshold) {
+              iqd(sim, data$tmean, w = function(x) as.numeric(x <= threshold))
+            }
+          )
+        }
+      )
+      res$lower_tw_iqd = list(cbind(era = era_lower_tw_iqd, sim_lower_tw_iqd))
+      res$n_obs_below_lower_thresholds = list(n_obs_below_lower_thresholds)
+
       # Compare marginal distributions for all n-day differences, with n in `diff_lengths`
       # This is easiest to do if we first expand `data` so it contains one row for every
       # single date within `range(data$date)`
@@ -619,8 +670,8 @@ for (K in K_vals) {
     })
 }
 
+# Load all eval data from the cross-validation experiment
 eval_files = list.files(cv_dir, full.names = TRUE)
-
 eval = vector("list", length(eval_files))
 pb = progress_bar(length(eval_files))
 for (i in seq_along(eval_files)) {
@@ -630,11 +681,23 @@ for (i in seq_along(eval_files)) {
 pb$terminate()
 eval = rbindlist(eval, fill = TRUE)
 
+if (FALSE) {
+  tmp = eval[K == chosen_K]
+  y_local = sapply(tmp$lower_tw_iqd, function(x) x[2, 4])
+  y_full = sapply(tmp$lower_tw_iqd, function(x) x[2, 5])
+
+  summary(y_local / y_full)
+  summary(y_full / y_local)
+  y_full / y_local
+  y_local / y_full
+}
+
 # Find the best value of K
 # ------------------------------------------------------------------------------
 
 # Which values of K and which models should we evaluate?
 chosen_Ks = c(5, 10, 15, 20)
+#chosen_Ks = c(5, 10, 20, 25)
 data_types = c("local_deterministic", "full")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
@@ -839,7 +902,7 @@ plot_tikz(
   file = file.path(image_dir, "temp_map_scores.pdf"),
   tex_engine = "lualatex",
   plot = plot,
-  width = 12,
+  width = 11,
   height = 8
 )
 
@@ -850,12 +913,196 @@ pdf_convert(
   format = "png"
 )
 
+# Create a map plot for raw RMSE and MAE values
+# ------------------------------------------------------------------------------
+
+rmse_data = as.data.table(do.call(rbind, eval[K == chosen_K, rmse]))
+mae_data = as.data.table(do.call(rbind, eval[K == chosen_K, mae]))
+rmse_data = rmse_data[, .(full, era)][, let(id = eval[K == chosen_K, id], tag = "rmse")]
+mae_data = mae_data[, .(full, era)][, let(id = eval[K == chosen_K, id], tag = "mae")]
+
+plot_data = rbind(
+  melt(rmse_data, id.vars = c("id", "tag")),
+  melt(mae_data, id.vars = c("id", "tag"))
+)
+plot_data[, let(both = list(c(value[variable == "full"], value[variable == "era"]))), by = c("id", "tag")]
+plot_data = merge(plot_data, station_meta[, .(id, lon, lat, elev, elev_mean)], by = "id")
+plot_data[, let(elev_diff = elev - elev_mean)]
+
+tmean_data = load_station_data(
+  meta = station_meta,
+  data_dir = data_dir,
+  verbose = TRUE,
+  era_stats = TRUE
+)
+tmean_data = tmean_data[, .(tmean = mean(tmean), era_tmean = mean(era_tmean)), by = .(yday(date), id)]
+tmean_data = tmean_data[, .(tmean = mean(tmean), era_tmean = mean(era_tmean)), by = "id"]
+
+plot_data = merge(plot_data, tmean_data[, .(id, tmean, era_tmean)], by = "id")
+
+plot_data = st_as_sf(
+  plot_data,
+  coords = c("lon", "lat"),
+  crs = st_crs(4326)
+)
+plot_data$lon = st_coordinates(plot_data)[, 1]
+plot_data$lat = st_coordinates(plot_data)[, 2]
+plot_data$tag = factor(plot_data$tag, levels = score_info$name, labels = score_info$shortname)
+plot_data$variable = factor(plot_data$variable, levels = c("full", "era"), labels = c("Full", "ERA5"))
+
+map = rnaturalearth::ne_countries(returnclass = "sf", scale = 110)
+
+pseudo_log_transform = scales::new_transform(
+  name = "pseudo_log",
+  transform = function(x) asinh(x * 10),
+  inverse = function(x) sinh(x) / 10
+)
+
+# Function for computing the proper skill score value inside each hexagon
+skill_score_hex_func = function(x) {
+  s1 = mean(sapply(x, `[[`, 1))
+  s0 = mean(sapply(x, `[[`, 2))
+  res = skill_score(s1 = s1, s0 = s0)
+  res
+}
+
+plots = list()
+for (t in unique(plot_data$tag)) {
+  for (v in unique(plot_data$variable)) {
+    plots[[length(plots) + 1]] = ggplot() +
+      geom_sf(data = map) +
+      stat_summary_hex(
+        data = dplyr::filter(plot_data, tag == t, variable == v),
+        aes(x = lon, y = lat, z = value),
+        bins = 15
+      ) +
+      geom_sf(data = map, fill = NA) +
+      labs(x = "", y = "", fill = t, title = paste0(v, ", ", t)) +
+      scale_fill_viridis_c(
+        option = if (t == "MAE") "D" else "D",
+        limits = if (t == "MAE") c(.2, 10) else c(.2, 10),
+        transform = "log",
+        breaks = c(.5, 1, 2, 4, 8),
+        labels = paste0("$", c(.5, 1, 2, 4, 8), "$")
+      )
+  }
+  plots[[length(plots) + 1]] = ggplot() +
+    geom_sf(data = map) +
+    stat_summary_hex(
+      fun = skill_score_hex_func,
+      data = dplyr::filter(plot_data, tag == t, variable == v),
+      aes(x = lon, y = lat, z = both),
+      bins = 15
+    ) +
+    geom_sf(data = map, fill = NA) +
+    labs(x = "", y = "", fill = "Skill", title = paste0(t, " skill score")) +
+    scale_fill_scico(
+      palette = "vik",
+      limits = c(-.8, .8),
+      transform = pseudo_log_transform,
+      breaks = c(-.5, -.2, 0, .2, .5)
+    )
+}
+
+plots[[length(plots) + 1]] = ggplot() +
+  geom_sf(data = map) +
+  stat_summary_hex(
+    fun = function(x) {
+      res = mean(abs(x))
+      res[res < 10] = 10
+      res
+    },
+    data = dplyr::filter(plot_data, tag == tag[1], variable == variable[1]),
+    aes(x = lon, y = lat, z = elev_diff),
+    bins = 15
+  ) +
+  geom_sf(data = map, fill = NA) +
+  labs(x = "", y = "", fill = "Elevation", title = "Mean elevation\ndifference") +
+  scale_fill_viridis_c(
+    trans = "log",
+    breaks = 10 * 2^(0:6),
+    labels = c("$<10$", 10 * 2^(1:6))
+  )
+
+plots[[length(plots) + 1]] = ggplot() +
+  geom_sf(data = map) +
+  stat_summary_hex(
+    fun = mean,
+    data = dplyr::filter(plot_data, tag == tag[1], variable == variable[1]),
+    aes(x = lon, y = lat, z = tmean),
+    bins = 15
+  ) +
+  geom_sf(data = map, fill = NA) +
+  labs(x = "", y = "", fill = "Temperature", title = "Mean annual temperature") +
+  scale_fill_viridis_c()
+
+
+for (i in seq_along(plots)) {
+  plots[[i]] = plots[[i]] +
+    coord_sf(
+      xlim = st_bbox(plot_data)[c(1, 3)] + c(-.5, 1.5),
+      ylim = st_bbox(plot_data)[c(2, 4)] + c(-1, 1),
+      crs = st_crs(plot_data)
+    ) +
+    scale_x_continuous(
+      breaks = seq(-20, 40, by = 20),
+      labels = paste0("$", c(20, 0, 20, 40), "^\\circ$", c("W", "", "E", "E")),
+      minor_breaks = seq(-10, 30, by = 10)
+    ) +
+    scale_y_continuous(
+      breaks = seq(40, 70, by = 10),
+      labels = paste0("$", seq(40, 70, by = 10), "^\\circ$N"),
+      minor_breaks = seq(35, 65, by = 10)
+    ) +
+    theme_light() +
+    theme(
+      strip.text = element_text(colour = "black", size = rel(.8)),
+      text = element_text(size = 18),
+      strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0"),
+      title = element_text(size = rel(.8))
+    ) +
+    if (i %in% c(3, 6, 7)) {
+      theme(legend.text = element_text(size = rel(.5), angle = 70, vjust = .5))
+    } else {
+      theme(legend.text = element_text(size = rel(.5)))
+    }
+}
+
+plot_design = "
+##bbddff
+aabbddff
+aacceegg
+##cceegg
+"
+
+plot = patchwork::wrap_plots(
+  plots[c(7, 1, 4, 2, 5, 3, 6)],
+  design = plot_design,
+  guides = "collect"
+)
+plot = plot & theme(legend.position = "bottom")
+
+plot_tikz(
+  file = file.path(image_dir, "temp_map_scores2.pdf"),
+  tex_engine = "lualatex",
+  plot = plot,
+  width = 13,
+  height = 7
+)
+
+# Convert the plot to png, to reduce the size of the final paper 
+pdf_convert(
+  in_path = file.path(image_dir, "temp_map_scores2.pdf"),
+  out_paths = file.path(image_dir, "temp_map_scores2.png"),
+  format = "png"
+)
+
 # ==============================================================================
 # Find good and bad stations, and plot time series' from them
 # ==============================================================================
 
 bad_ids = c("135860-99999", "164600-99999", "062730-99999", "166820-99999")
-good_ids = c("075910-99999", "163450-99999", "156150-99999", "109460-99999")
+good_ids = c("075910-99999", "163450-99999", "156150-99999", "067200-99999")
 
 time_series_data = lapply(
   X = c(bad_ids, good_ids),
