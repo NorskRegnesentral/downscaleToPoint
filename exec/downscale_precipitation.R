@@ -1159,7 +1159,7 @@ for (i in seq_along(plots)) {
       strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0"),
       title = element_text(size = rel(.8)),
       legend.text = element_text(size = rel(.5)),
-      legend.position = "bottom"
+      legend.title = element_text(vjust = 1)
     ) +
     if (i %in% c(3, 6)) {
       theme(legend.text = element_text(size = rel(.5), angle = 70, vjust = .5))
@@ -1167,7 +1167,6 @@ for (i in seq_along(plots)) {
       theme(legend.text = element_text(size = rel(.5)))
     }
 }
-
 
 plot_design = "
 ##bbddff

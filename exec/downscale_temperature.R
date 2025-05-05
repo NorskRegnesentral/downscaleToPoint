@@ -1059,7 +1059,8 @@ for (i in seq_along(plots)) {
       strip.text = element_text(colour = "black", size = rel(.8)),
       text = element_text(size = 18),
       strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0"),
-      title = element_text(size = rel(.8))
+      title = element_text(size = rel(.8)),
+      legend.title = element_text(vjust = 1)
     ) +
     if (i %in% c(3, 6, 7)) {
       theme(legend.text = element_text(size = rel(.5), angle = 70, vjust = .5))
