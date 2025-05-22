@@ -738,7 +738,7 @@ plot = bootstrap_data[K1 > K0][, let(
     aes(x = score_name, ymin = lower, ymax = upper, col = K1, group = K1),
     position = position_dodge(.3)
   ) +
-  facet_grid(data_type~K0) +
+  facet_grid(data_type ~ K0) +
   theme_light() +
   theme(
     strip.text = element_text(colour = "black", size = rel(1)),
@@ -871,9 +871,14 @@ map = rnaturalearth::ne_countries(returnclass = "sf", scale = 110)
 
 plot = ggplot() +
   geom_sf(data = map) +
-  stat_summary_hex(fun = my_hex_func, data = plot_data, aes(x = lon, y = lat, z = scores), bins = 15) +
+  stat_summary_hex(
+    fun = my_hex_func,
+    data = plot_data,
+    aes(x = lon, y = lat, z = scores),
+    bins = 15
+  ) +
   geom_sf(data = map, fill = NA) +
-  scale_fill_scico(palette = "vik", limits = c(-1, 1)) +
+  scale_fill_scico(palette = "vik", limits = c(-1, 1), direction = -1) +
   coord_sf(
     xlim = st_bbox(plot_data)[c(1, 3)] + c(-.5, 1.5),
     ylim = st_bbox(plot_data)[c(2, 4)] + c(-1, 1),
@@ -906,7 +911,7 @@ plot_tikz(
   height = 8
 )
 
-# Convert the plot to png, to reduce the size of the final paper 
+# Convert the plot to png, to reduce the size of the final paper
 pdf_convert(
   in_path = file.path(image_dir, "temp_map_scores.pdf"),
   out_paths = file.path(image_dir, "temp_map_scores.png"),
@@ -925,7 +930,9 @@ plot_data = rbind(
   melt(rmse_data, id.vars = c("id", "tag")),
   melt(mae_data, id.vars = c("id", "tag"))
 )
-plot_data[, let(both = list(c(value[variable == "full"], value[variable == "era"]))), by = c("id", "tag")]
+plot_data[, let(
+  both = list(c(value[variable == "full"], value[variable == "era"]))
+), by = c("id", "tag")]
 plot_data = merge(plot_data, station_meta[, .(id, lon, lat, elev, elev_mean)], by = "id")
 plot_data[, let(elev_diff = elev - elev_mean)]
 
@@ -935,8 +942,14 @@ tmean_data = load_station_data(
   verbose = TRUE,
   era_stats = TRUE
 )
-tmean_data = tmean_data[, .(tmean = mean(tmean), era_tmean = mean(era_tmean)), by = .(yday(date), id)]
-tmean_data = tmean_data[, .(tmean = mean(tmean), era_tmean = mean(era_tmean)), by = "id"]
+tmean_data = tmean_data[, .(
+  tmean = mean(tmean),
+  era_tmean = mean(era_tmean)
+), by = .(yday(date), id)]
+tmean_data = tmean_data[, .(
+  tmean = mean(tmean),
+  era_tmean = mean(era_tmean)
+), by = "id"]
 
 plot_data = merge(plot_data, tmean_data[, .(id, tmean, era_tmean)], by = "id")
 
@@ -948,7 +961,11 @@ plot_data = st_as_sf(
 plot_data$lon = st_coordinates(plot_data)[, 1]
 plot_data$lat = st_coordinates(plot_data)[, 2]
 plot_data$tag = factor(plot_data$tag, levels = score_info$name, labels = score_info$shortname)
-plot_data$variable = factor(plot_data$variable, levels = c("full", "era"), labels = c("Full", "ERA5"))
+plot_data$variable = factor(
+  plot_data$variable,
+  levels = c("full", "era"),
+  labels = c("Full", "ERA5")
+)
 
 map = rnaturalearth::ne_countries(returnclass = "sf", scale = 110)
 
@@ -1000,6 +1017,7 @@ for (t in unique(plot_data$tag)) {
       palette = "vik",
       limits = c(-.8, .8),
       transform = pseudo_log_transform,
+      direction = -1,
       breaks = c(-.5, -.2, 0, .2, .5)
     )
 }

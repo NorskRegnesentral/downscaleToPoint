@@ -970,9 +970,14 @@ map = rnaturalearth::ne_countries(returnclass = "sf", scale = 110)
 
 plot = ggplot() +
   geom_sf(data = map) +
-  stat_summary_hex(fun = my_hex_func, data = plot_data, aes(x = lon, y = lat, z = scores), bins = 15) +
+  stat_summary_hex(
+    fun = my_hex_func,
+    data = plot_data,
+    aes(x = lon, y = lat, z = scores),
+    bins = 15
+  ) +
   geom_sf(data = map, fill = NA) +
-  scale_fill_scico(palette = "vik", limits = c(-1, 1)) +
+  scale_fill_scico(palette = "vik", limits = c(-1, 1), direction = -1) +
   coord_sf(
     xlim = st_bbox(plot_data)[c(1, 3)] + c(-.5, 1.5),
     ylim = st_bbox(plot_data)[c(2, 4)] + c(-1, 1),
@@ -1005,7 +1010,7 @@ plot_tikz(
   height = 8
 )
 
-# Convert the plot to png, to reduce the size of the final paper 
+# Convert the plot to png, to reduce the size of the final paper
 pdf_convert(
   in_path = file.path(image_dir, "precip_map_scores.pdf"),
   out_paths = file.path(image_dir, "precip_map_scores.png"),
@@ -1024,7 +1029,9 @@ plot_data = rbind(
   melt(rmse_data, id.vars = c("id", "tag")),
   melt(mae_data, id.vars = c("id", "tag"))
 )
-plot_data[, let(both = list(c(value[variable == "full"], value[variable == "era"]))), by = c("id", "tag")]
+plot_data[, let(
+  both = list(c(value[variable == "full"], value[variable == "era"]))
+), by = c("id", "tag")]
 plot_data = merge(plot_data, station_meta[, .(id, lon, lat, elev)], by = "id")
 
 precip_data = load_station_data(
@@ -1034,8 +1041,14 @@ precip_data = load_station_data(
   era_stats = TRUE,
   rm_bad_flags = TRUE
 )
-precip_data = precip_data[, .(precip = mean(precip), era_precip = mean(era_precip)), by = .(yday(date), id)]
-precip_data = precip_data[, .(precip = sum(precip), era_precip = sum(era_precip)), by = "id"]
+precip_data = precip_data[, .(
+  precip = mean(precip),
+  era_precip = mean(era_precip)
+), by = .(yday(date), id)]
+precip_data = precip_data[, .(
+  precip = sum(precip),
+  era_precip = sum(era_precip)
+), by = "id"]
 plot_data = merge(plot_data, precip_data[, .(id, precip, era_precip)], by = "id")
 plot_data[, let(precip_diff = precip - era_precip)]
 
@@ -1047,7 +1060,11 @@ plot_data = st_as_sf(
 plot_data$lon = st_coordinates(plot_data)[, 1]
 plot_data$lat = st_coordinates(plot_data)[, 2]
 plot_data$tag = factor(plot_data$tag, levels = score_info$name, labels = score_info$shortname)
-plot_data$variable = factor(plot_data$variable, levels = c("full", "era"), labels = c("Full", "ERA5"))
+plot_data$variable = factor(
+  plot_data$variable,
+  levels = c("full", "era"),
+  labels = c("Full", "ERA5")
+)
 
 map = rnaturalearth::ne_countries(returnclass = "sf", scale = 110)
 
@@ -1102,6 +1119,7 @@ for (t in unique(plot_data$tag)) {
       limits = c(-.6, .6),
       transform = pseudo_log_transform,
       breaks = c(-.5, -.2, 0, .2, .5),
+      direction = -1,
       labels = paste0("$", c(-.5, -.2, 0, .2, .5), "$")
     )
 }
@@ -1190,7 +1208,7 @@ plot_tikz(
   height = 7
 )
 
-# Convert the plot to png, to reduce the size of the final paper 
+# Convert the plot to png, to reduce the size of the final paper
 pdf_convert(
   in_path = file.path(image_dir, "precip_map_scores2.pdf"),
   out_paths = file.path(image_dir, "precip_map_scores2.png"),
