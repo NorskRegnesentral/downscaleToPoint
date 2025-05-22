@@ -11,6 +11,7 @@ library(scico)
 library(MASS)
 library(parallel)
 library(purrr)
+library(patchwork)
 library(downscaleToPoint)
 
 # Define all necessary paths
@@ -125,6 +126,101 @@ if (!file.exists(global_fit_path)) {
   rm(data)
   gc()
 }
+
+# ==============================================================================
+# Plot the global fit
+# ==============================================================================
+
+global_fit = readRDS(global_fit_path)
+
+plot_data = fast_mgcv_plot_data(
+  fit = global_fit,
+  lon_range = c(-30, 50),
+  lat_range = c(30, 75)
+)
+plot_data[["era_tmean"]]$y = plot_data[["era_tmean"]]$y + plot_data[["era_tmean"]]$x
+
+plots = list()
+for (i in seq_along(plot_data)) {
+  plots[[i]] = ggplot() +
+    theme_light() +
+    theme(text = element_text(size = 15))
+  if (all(c("lon", "lat") %in% names(plot_data[[i]]))) {
+    map = rnaturalearth::ne_countries(returnclass = "sf", scale = 110)
+    plots[[i]] = plots[[i]] +
+      geom_sf(data = map) +
+      geom_raster(data = plot_data[[i]], aes(x = lon, y = lat, fill = value), alpha = .8) +
+      geom_sf(data = map, fill = NA) +
+      coord_sf(
+        xlim = range(plot_data[[i]]$lon),
+        ylim = range(plot_data[[i]]$lat),
+        crs = st_crs(4326)
+      ) +
+      scale_fill_viridis_c() +
+      labs(title = "Spatial effect", x = "", y = "", fill = "$\\eta$") +
+      scale_x_continuous(
+        breaks = seq(-20, 40, by = 20),
+        labels = paste0("$", c(20, 0, 20, 40), "^\\circ$", c("W", "", "E", "E")),
+        minor_breaks = seq(-10, 30, by = 10),
+        expand = c(0, 0)
+      ) +
+      scale_y_continuous(
+        breaks = seq(40, 70, by = 10),
+        labels = paste0("$", seq(40, 70, by = 10), "^\\circ$N"),
+        minor_breaks = seq(35, 65, by = 10),
+        expand = c(0, 0)
+      )
+  } else {
+    title_name = factor(
+      names(plot_data)[i],
+      levels = c("era_tmean", "era_log_precip", "station_elevation", "elevation_diff", "yday"),
+      labels = c(
+        "ERA5 temperature", "ERA5 precipitation",
+        "Station elevation", "Elevation difference", "Temporal effect"
+      )
+    )
+    x_name = factor(
+      names(plot_data)[i],
+      levels = c("era_tmean", "era_log_precip", "station_elevation", "elevation_diff", "yday"),
+      labels = c(
+        "$^\\circ$C", "mm/day", "m.a.s.l.", "m", "Day of the year"
+      )
+    )
+    plots[[i]] = plots[[i]] +
+      geom_line(data = plot_data[[i]], aes(x = x, y = y)) +
+      labs(title = title_name, y = "$\\eta$", x = x_name) +
+      theme(axis.title.y = element_text(angle = 0, vjust = .5))
+    if (title_name == "ERA5 precipitation") {
+      plots[[i]] = plots[[i]] + scale_x_continuous(
+        breaks = log(c(0, 2^(0:9)) + 1),
+        labels = c(0, 2^(0:9))
+      )
+    } else if (title_name == "Station elevation") {
+      plots[[i]] = plots[[i]] + scale_x_continuous(
+        breaks = asinh(c(0, 2^seq(0, 14, by = 2))),
+        labels = c(0, 2^seq(0, 14, by = 2))
+      )
+    } else if (title_name == "Elevation difference") {
+      plots[[i]] = plots[[i]] + scale_x_continuous(
+        breaks = asinh(c(-2^seq(14, 2, by = -4), 0, 2^seq(2, 14, by = 4))),
+        labels = c(-2^seq(14, 2, by = -4), 0, 2^seq(2, 14, by = 4))
+      )
+    }
+  }
+}
+
+plot = patchwork::wrap_plots(
+  plots,
+  heights = rep(1, 2),
+  widths = rep(1, 3)
+)
+
+plot_tikz(
+  file = file.path(image_dir, "global_temp_model.pdf"),
+  plot = plot,
+  width = 12,
+  height = 7
+)
 
 # ==============================================================================
 # Perform local modelling
@@ -1109,7 +1205,7 @@ plot_tikz(
   height = 7
 )
 
-# Convert the plot to png, to reduce the size of the final paper 
+# Convert the plot to png, to reduce the size of the final paper
 pdf_convert(
   in_path = file.path(image_dir, "temp_map_scores2.pdf"),
   out_paths = file.path(image_dir, "temp_map_scores2.png"),

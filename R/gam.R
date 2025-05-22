@@ -50,3 +50,68 @@ fast_mgcv_pred = function(fit, data, detailed = FALSE) {
 
   out
 }
+
+
+#' Create data for plotting all the smooth effects of an mgcv object
+#' @export
+fast_mgcv_plot_data = function(fit,
+                               n = 1000,
+                               coord_names = c("lon", "lat"),
+                               lon_range = NULL,
+                               lat_range = NULL) {
+  stopifnot(is(fit, "gam"))
+  terms = attr(fit[["terms"]], "term.labels")
+
+  out = list()
+  for (smooth in fit[["smooth"]]) {
+    terms = smooth[["term"]]
+    if (length(terms) == 1) {
+      if (!is.null(smooth[["Xu"]])) {
+        X_range = range(as.vector(smooth[["Xu"]]) + as.vector(smooth[["shift"]]))
+      } else if (!is.null(smooth[["xp"]])) {
+        X_range = range(smooth[["xp"]])
+      } else {
+        stop("I don't know what the X-range for covariate ", terms, " is.")
+      }
+      data = data.frame(value = seq(min(X_range), max(X_range), length.out = n))
+      names(data) = terms
+      X = mgcv::PredictMat(smooth, data)
+      beta = fit[["coefficients"]][seq(smooth[["first.para"]], smooth[["last.para"]], by = 1)]
+      pred = as.vector(X %*% beta)
+      cov = smooth[["S"]][[1]] * smooth[["S.scale"]]
+      out[[terms]] = data.frame(
+        x = data[[terms]],
+        y = pred,
+        name = terms
+      )
+    } else {
+      if (!all(terms %in% coord_names)) {
+        stop(
+          "the fit contains a ", length(terms), "-variate model term that\n",
+          "I don't know how to deal with. Term names:\n", paste(terms, collapse = ", ")
+        )
+      }
+      lon = if (is.null(lon_range)) {
+        seq(0, 360, length.out = n)
+      } else {
+        seq(min(lon_range), max(lon_range), length.out = sqrt(n))
+      }
+      lat = if (is.null(lat_range)) {
+        seq(-90, 90, length.out = n)
+      } else {
+        seq(min(lat_range), max(lat_range), length.out = sqrt(n))
+      }
+      data = as.data.frame(expand.grid(lon = lon, lat = lat))
+      X = mgcv::PredictMat(smooth, data)
+      beta = fit[["coefficients"]][seq(smooth[["first.para"]], smooth[["last.para"]], by = 1)]
+      out[[paste(terms, collapse = ":")]] = data.frame(
+        lon = data$lon,
+        lat = data$lat,
+        value = as.vector(X %*% beta),
+        name = paste(terms, collapse = ":")
+      )
+    }
+  }
+
+  out
+}
