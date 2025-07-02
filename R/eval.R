@@ -1,10 +1,10 @@
 
 #' Estimate the (possibly weighted) IQD between x and y, using numerical integration
 #' @export
-iqd = function(x, y, w = function(x) 1, rm_zero = FALSE) {
+iqd = function(x, y, w = function(x) 1, rm_zero = FALSE, zero_threshold = 0) {
   if (rm_zero) {
-    x = x[x > 0]
-    y = y[y > 0]
+    x = x[x > zero_threshold]
+    y = y[y > zero_threshold]
   }
   F = ecdf(x)
   G = ecdf(y)

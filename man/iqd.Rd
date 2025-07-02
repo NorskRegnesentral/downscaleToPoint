@@ -4,7 +4,7 @@
 \alias{iqd}
 \title{Estimate the (possibly weighted) IQD between x and y, using numerical integration}
 \usage{
-iqd(x, y, w = function(x) 1, rm_zero = FALSE)
+iqd(x, y, w = function(x) 1, rm_zero = FALSE, zero_threshold = 0)
 }
 \description{
 Estimate the (possibly weighted) IQD between x and y, using numerical integration

@@ -64,10 +64,10 @@ load_station_data = function(meta,
     data[[i]][, let(
       lon = meta$lon[i],
       lat = meta$lat[i],
-      station_elevation = asinh(meta$elev[i]),
-      grid_elevation_mean = asinh(meta$elev_mean[i]),
-      grid_elevation_sd = asinh(meta$elev_sd[i]),
-      elevation_diff = asinh(meta$elev[i] - meta$elev_mean[i])
+      station_elevation = meta$elev[i],
+      grid_elevation_mean = meta$elev_mean[i],
+      grid_elevation_sd = meta$elev_sd[i],
+      elevation_diff = meta$elev[i] - meta$elev_mean[i]
     )]
     # Remove NA from the id column
     data[[i]]$id = meta$id[i]

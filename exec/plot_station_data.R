@@ -4,6 +4,7 @@ library(sf)
 library(rnaturalearth)
 library(scico)
 library(downscaleToPoint)
+library(ncdf4)
 
 # Define all necessary paths
 # ------------------------------------------------------------------------------
@@ -26,6 +27,37 @@ station_meta[, let(
 station_meta[has_tmean & has_precip, let(tag = "TP")]
 station_meta[has_tmean & !has_precip, let(tag = "T")]
 station_meta[has_precip & !has_tmean, let(tag = "P")]
+
+# Load the CPRCM data (this must be run on hauktjern)
+# ------------------------------------------------------------------------------
+
+cprcm_dir = "/bigdisk3/pro/cprcm/"
+cprcm_raw_files = list.files(file.path(cprcm_dir, "raw"), full.names = TRUE)
+
+cprcm_raw_files = grep("ERAINT", cprcm_raw_files, value = TRUE)
+cprcm_raw_files = grep("v1_day_\\d", cprcm_raw_files, value = TRUE)
+
+nc = nc_open(cprcm_raw_files[1])
+nc_lon = ncvar_get(nc, "lon")
+nc_lat = ncvar_get(nc, "lat")
+nc_close(nc)
+
+cprcm_poly = cbind(
+  c(
+    nc_lon[nrow(nc_lon), 1:ncol(nc_lon)],
+    nc_lon[nrow(nc_lon):1, ncol(nc_lon)],
+    nc_lon[1, ncol(nc_lon):1],
+    nc_lon[1:nrow(nc_lon), 1]
+  ),
+  c(
+    nc_lat[nrow(nc_lon), 1:ncol(nc_lon)],
+    nc_lat[nrow(nc_lon):1, ncol(nc_lon)],
+    nc_lat[1, ncol(nc_lon):1],
+    nc_lat[1:nrow(nc_lon), 1]
+  )
+)
+cprcm_poly = st_polygon(list(cprcm_poly))
+cprcm_poly = st_sf(geometry = st_sfc(cprcm_poly), crs = 4326)
 
 # Plot a map with counts of the number of weather stations inside different hexagons
 # ------------------------------------------------------------------------------
@@ -55,6 +87,7 @@ plot = ggplot() +
   geom_sf(data = map) +
   geom_hex(data = plot_data, aes(x = lon, y = lat), bins = 15) +
   geom_sf(data = map, fill = NA, color = "white") +
+  geom_sf(data = cprcm_poly, fill = NA, color = "white", linewidth = 1, linetype = "dashed") +
   scale_fill_viridis_c() +
   facet_wrap(~tag) +
   coord_sf(
@@ -83,9 +116,7 @@ plot = ggplot() +
 
 plot_tikz(
   file = file.path(image_dir, "map.pdf"),
-  tex_engine = "lualatex",
   plot = plot,
   width = 10,
   height = 4.5
 )
-

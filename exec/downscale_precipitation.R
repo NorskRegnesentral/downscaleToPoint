@@ -15,20 +15,16 @@ library(downscaleToPoint)
 library(patchwork)
 library(dplyr)
 
-"
-- count how many times we beat ERA and the local model when looking at twIQD!
-"
-
 # Define all necessary paths
 # ------------------------------------------------------------------------------
 data_dir = file.path(here::here(), "raw_data")
 model_dir = file.path(data_dir, "models", "precipitation")
-image_dir = file.path(data_dir, "images")
+image_dir = file.path(data_dir, "images", "precipitation_new")
 local_fits_dir = file.path(model_dir, "local_fits")
-cv_dir = file.path(data_dir, "cross-validation", "precipitation")
+cv_dir = file.path(data_dir, "cross-validation", "precipitation_new")
 
 if (!dir.exists(model_dir)) dir.create(model_dir, recursive = TRUE)
-if (!dir.exists(image_dir)) dir.create(image_dir)
+if (!dir.exists(image_dir)) dir.create(image_dir, recursive = TRUE)
 if (!dir.exists(local_fits_dir)) dir.create(local_fits_dir)
 if (!dir.exists(cv_dir)) dir.create(cv_dir, recursive = TRUE)
 
@@ -43,7 +39,7 @@ diff_lengths = c(1, 3, 7) # Which n-day-differences to evaluate in the cross-val
 zero_thresholds = c(0, .1, .5, 1) # Different precipitation thresholds for defining a day as dry
 
 # Thresholds for computing threshold weighted IQD scores during the cross-validation
-threshold_probs = c(.8, .9, .95, .99)
+threshold_probs = c(.8, .9, .95, .99, .995, .999)
 
 # K is the number of neighbours to use for simulating precipitation at an unknown location.
 # K_vals is the vector of all values of K we will test during the cross-validation experiment
@@ -57,6 +53,13 @@ score_info = as.data.frame(t(do.call(cbind, list(
   c("zero_probs_se", "ZP01", 2),
   c("zero_probs_se", "ZP1", 4),
   c("iqd", "IQD", 1),
+  c("quantile_score", "Q95", 3),
+  c("quantile_score", "Q99", 4),
+  #c("quantile_score", "Q99", 4),
+  #c("quantile_score", "Q999", 6),
+  #c("twrmse", "twRMSE", 1),
+  #c("logrmse", "logRMSE", 1),
+  #c("logmae", "logMAE", 1),
   c("weekly_mean_iqd", "WM", 1),
   c("weekly_sd_iqd", "WS", 1),
   c("monthly_mean_iqd", "MM", 1),
@@ -73,7 +76,6 @@ score_info$row_index = as.integer(score_info$row_index)
 station_meta = readRDS(meta_path)
 
 # Remove stations with few precipitation observations
-station_meta = station_meta[n_precip > 200]
 station_meta = station_meta[n_good_precip_flag > 200]
 station_meta = station_meta[n_unique_precip > 40]
 
@@ -98,9 +100,11 @@ if (!file.exists(global_fit_path)) {
     yday = yday(date),
     era_precip_bool = era_precip > 0,
     precip_bool = precip > 0,
-    log_precip = log(precip + 1),
+    station_elevation = log(station_elevation + 1),
     era_log_precip = log(era_precip + 1)
   )]
+
+  t1 = Sys.time()
 
   # Formula for the occurrence model
   formula = precip_bool ~
@@ -108,6 +112,7 @@ if (!file.exists(global_fit_path)) {
     s(era_log_precip) +
     s(station_elevation) +
     s(elevation_diff) +
+    s(grid_elevation_sd) +
     s(era_tmean) +
     s(yday, bs = "cc") +
     s(lon, lat, bs = "sos")
@@ -133,6 +138,7 @@ if (!file.exists(global_fit_path)) {
     s(era_log_precip) +
     s(station_elevation) +
     s(elevation_diff) +
+    s(grid_elevation_sd) +
     s(era_tmean) +
     s(yday, bs = "cc") +
     s(lon, lat, bs = "sos")
@@ -155,6 +161,8 @@ if (!file.exists(global_fit_path)) {
     "residuals", "fitted.values", "linear.predictors")
   intensity_fit[unneccessary_vars] = NULL
   gc()
+
+  t2 = Sys.time()
 
   # Save the results
   saveRDS(
@@ -218,17 +226,23 @@ for (i in seq_along(plot_data)) {
   } else {
     title_name = factor(
       names(plot_data)[i],
-      levels = c("era_tmean", "era_log_precip", "station_elevation", "elevation_diff", "yday"),
+      levels = c(
+        "era_tmean", "era_log_precip", "station_elevation",
+        "elevation_diff", "yday", "grid_elevation_sd"
+      ),
       labels = c(
-        "ERA5 temperature", "ERA5 precipitation",
-        "Station elevation", "Elevation difference", "Temporal effect"
+        "ERA5 temperature", "ERA5 precipitation", "Station elevation",
+        "Elevation difference", "Seasonal effect", "ERA5 elevation SD"
       )
     )
     x_name = factor(
       names(plot_data)[i],
-      levels = c("era_tmean", "era_log_precip", "station_elevation", "elevation_diff", "yday"),
+      levels = c(
+        "era_tmean", "era_log_precip", "station_elevation",
+        "elevation_diff", "yday", "grid_elevation_sd"
+      ),
       labels = c(
-        "$^\\circ$C", "mm/day", "m.a.s.l.", "m", "Day of the year"
+        "$^\\circ$C", "mm/day", "m.a.s.l.", "m", "Day of the year", "m"
       )
     )
     plot = plot +
@@ -237,18 +251,13 @@ for (i in seq_along(plot_data)) {
       theme(axis.title.y = element_text(angle = 0, vjust = .5))
     if (title_name == "ERA5 precipitation") {
       plot = plot + scale_x_continuous(
-        breaks = log(c(0, 2^(0:9)) + 1),
-        labels = c(0, 2^(0:9))
+        breaks = log(c(0, 2^seq(0, 20, by = 2)) + 1),
+        labels = c(0, 2^seq(0, 20, by = 2))
       )
     } else if (title_name == "Station elevation") {
       plot = plot + scale_x_continuous(
-        breaks = asinh(c(0, 2^seq(0, 14, by = 2))),
-        labels = c(0, 2^seq(0, 14, by = 2))
-      )
-    } else if (title_name == "Elevation difference") {
-      plot = plot + scale_x_continuous(
-        breaks = asinh(c(-2^seq(14, 2, by = -4), 0, 2^seq(2, 14, by = 4))),
-        labels = c(-2^seq(14, 2, by = -4), 0, 2^seq(2, 14, by = 4))
+        breaks = log(c(0, 2^seq(0, 20, by = 3)) + 1),
+        labels = c(0, 2^seq(0, 20, by = 3))
       )
     }
   }
@@ -256,21 +265,56 @@ for (i in seq_along(plot_data)) {
   plots[[model_name]][[names(plot_data)[i]]] = plot
 }
 
+plot_design = "
+aaccee##
+aacceegg
+bbddffgg
+bbddff##
+"
+
 for (i in seq_along(plots)) {
-  plot = patchwork::wrap_plots(
-    plots[[i]],
-    heights = rep(1, 2),
-    widths = rep(1, 3)
-  )
+  plot = patchwork::wrap_plots(plots[[i]], design = plot_design)
   model_name = names(plots)[i]
   plot_tikz(
     file = file.path(image_dir, paste0("global_precip_", model_name, "_model.pdf")),
     plot = plot,
-    width = 12,
-    height = 7
+    width = 14,
+    height = 6
   )
 }
 
+plot_design2 = "
+aaaacccceeee####
+aaaacccceeeegggg
+aaaacccceeeegggg
+aaaacccceeeegggg
+bbbbddddffffgggg
+bbbbddddffffgggg
+bbbbddddffffgggg
+bbbbddddffff####
+"
+
+big_plot = local({
+  p1 = patchwork::wrap_plots(plots$intensity, design = plot_design2) +
+    plot_annotation(
+      title = "Intensity",
+      theme = theme(plot.title = element_text(size = 18, face = "bold"))
+    )
+  p2 = patchwork::wrap_plots(plots$occurrence, design = plot_design2) +
+    plot_annotation(
+      title = "Occurrence",
+      theme = theme(plot.title = element_text(size = 18, face = "bold"))
+    )
+  plot = wrap_elements(p1) / wrap_elements(p2)
+  plot
+})
+
+plot_tikz(
+  file = file.path(image_dir, paste0("global_precip_model.pdf")),
+  plot = big_plot,
+  width = 14,
+  height = 9
+)
 
 # ==============================================================================
 # Perform local modelling
@@ -282,7 +326,7 @@ overwrite = FALSE
 
 # Loop over all weather stations and fit local GAM/ARMA models
 start_time = Sys.time()
-parallel::mclapply(
+fits = parallel::mclapply(
   X = seq_len(nrow(station_meta)),
   mc.preschedule = FALSE,
   mc.cores = n_cores,
@@ -307,7 +351,7 @@ parallel::mclapply(
       yday = yday(date),
       era_precip_bool = era_precip > 0,
       precip_bool = precip > 0,
-      log_precip = log(precip + 1),
+      station_elevation = log(station_elevation + 1),
       era_log_precip = log(era_precip + 1)
     )]
     data[, let(
@@ -569,7 +613,8 @@ for (K in K_vals) {
         p2 = station_meta[, cbind(lon, lat)]
       )
 
-      # Locate and load the local models from the K nearest weather stations to weather station nr. i
+      # Locate and load the local models from the K nearest
+      # weather stations to weather station nr. i
       nearest_index = order(dists)[-1][seq_len(K)]
       local_fits = lapply(
         X = seq_along(nearest_index),
@@ -593,8 +638,8 @@ for (K in K_vals) {
         year = year(date),
         month = month(date),
         era_precip_bool = era_precip > 0,
+        station_elevation = log(station_elevation + 1),
         precip_bool = precip > 0,
-        log_precip = log(precip + 1),
         era_log_precip = log(era_precip + 1)
       )]
       data[, let(day_count = as.integer(date) - as.integer(min(date)) + 1L), by = "id"]
@@ -696,8 +741,20 @@ for (K in K_vals) {
       era_rmse = rmse(data$precip, data$era_precip)
       res$rmse = list(c(era = era_rmse, sim_rmse))
 
+      era_logrmse = rmse(log(data$precip + 1), log(data$era_precip + 1))
+      sim_logrmse = sapply(mean_sim, function(x) rmse(log(data$precip + 1), log(x + 1)))
+      res$logrmse = list(c(era = era_logrmse, sim_logrmse))
+
+      tw_index = which(data$precip < quantile(data$precip, .95))
+      era_twrmse = rmse(data$precip[tw_index], data$era_precip[tw_index])
+      sim_twrmse = sapply(mean_sim, function(x) rmse(data$precip[tw_index], x[tw_index]))
+      res$twrmse = list(c(era = era_twrmse, sim_twrmse))
+
       # Compute the probability of zero precipitation, using multiple different zero-thresholds
-      sim_zero_probs = sapply(sims, function(x) sapply(zero_thresholds, function(y) mean(x <= y, na.rm = TRUE)))
+      sim_zero_probs = sapply(
+        X = sims,
+        FUN = function(x) sapply(zero_thresholds, function(y) mean(x <= y, na.rm = TRUE))
+      )
       obs_zero_probs = sapply(zero_thresholds, function(x) mean(data$precip <= x, na.rm = TRUE))
       era_zero_probs = sapply(zero_thresholds, function(x) mean(data$era_precip <= x, na.rm = TRUE))
       res$zero_probs = list(cbind(obs = obs_zero_probs, era = era_zero_probs, sim_zero_probs))
@@ -708,34 +765,53 @@ for (K in K_vals) {
       sim_mae = sapply(median_sim, mae, x = data$precip)
       era_mae = mae(data$precip, data$era_precip)
       res$mae = list(c(era = era_mae, sim_mae))
-      
-      # Compare marginal distributions of all non-zero precipitation intensities
-      era_iqd = iqd(data$era_precip, data$precip, rm_zero = TRUE)
-      sims_iqd = sapply(sims, function(x) iqd(as.vector(x), y = data$precip, rm_zero = TRUE))
-      res$iqd = list(c(era = era_iqd, sims_iqd))
 
-      # Compute threshold weighted IQD
-      thresholds = quantile(data$precip[data$precip > 0], threshold_probs)
-      n_obs_above_thresholds = sapply(thresholds, function(t) sum(data$precip >= t))
-      era_tw_iqd = sapply(
-        X = thresholds,
-        FUN = function(threshold) {
-          iqd(data$era_precip, data$precip, w = function(x) as.numeric(x >= threshold), rm_zero = TRUE)
+      era_logmae = mae(log(data$precip + 1), log(data$era_precip + 1))
+      sim_logmae = sapply(median_sim, function(x) mae(log(data$precip + 1), log(x + 1)))
+      res$logmae = list(c(era = era_logmae, sim_logmae))
+
+      tw_index = which(data$precip < quantile(data$precip, .95))
+      era_twmae = mae(data$precip[tw_index], data$era_precip[tw_index])
+      sim_twmae = sapply(median_sim, function(x) mae(data$precip[tw_index], x[tw_index]))
+      res$twmae = list(c(era = era_twmae, sim_twmae))
+
+      # Compare marginal distributions of all non-zero precipitation intensities
+      era_iqd = iqd(data$era_precip, data$precip, rm_zero = TRUE, w = function(x) x > 2 & x < 40)
+      sims_iqd = sapply(
+        X = sims,
+        FUN = function(x) {
+          iqd(as.vector(x), y = data$precip, rm_zero = TRUE, w = function(x) x > 2 & x < 40)
         }
       )
-      sim_tw_iqd = sapply(
+      res$iqd = list(c(era = era_iqd, sims_iqd))
+
+      # Compute quantile scores
+      quantile_score = function(prob, pred, obs, rm_zero = TRUE, zero_threshold = 1) {
+        if (rm_zero) {
+          pred = pred[pred > zero_threshold]
+          obs = obs[obs > zero_threshold]
+        }
+        q = quantile(pred, probs = prob)
+        mean(2 * (as.numeric(obs <= q) - prob) * (q - obs))
+      }
+      era_quantile_score = sapply(
+        X = threshold_probs,
+        FUN = quantile_score,
+        pred = data$era_precip,
+        obs = data$precip
+      )
+      sims_quantile_score = sapply(
         X = sims,
         FUN = function(sim) {
           sapply(
-            X = thresholds,
-            FUN = function(threshold) {
-              iqd(sim, data$precip, w = function(x) as.numeric(x >= threshold), rm_zero = TRUE)
-            }
+            X = threshold_probs,
+            FUN = quantile_score,
+            pred = sim,
+            obs = data$precip
           )
         }
       )
-      res$tw_iqd = list(cbind(era = era_tw_iqd, sim_tw_iqd))
-      res$n_obs_above_thresholds = list(n_obs_above_thresholds)
+      res$quantile_score = list(cbind(era = era_quantile_score, sims_quantile_score))
 
       # Compare marginal distributions for all n-day differences, with n in `diff_lengths`
       # This is easiest to do if we first expand `data` so it contains one row for every
@@ -910,8 +986,9 @@ eval$zero_probs_se = lapply(eval$zero_probs, function(x) (x[, -1] - x[, 1])^2)
 # ------------------------------------------------------------------------------
 
 # Which values of K and which models should we evaluate?
-chosen_Ks = c(15, 20, 25, 30)
-data_types = c("local", "full")
+#chosen_Ks = c(15, 20, 25, 30)
+chosen_Ks = c(5, 10, 15, 20, 25, 30)
+data_types = c("full")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
 set.seed(1)
@@ -930,8 +1007,8 @@ for (i in seq_len(nrow(score_info))) {
 bootstrap_data = rbindlist(bootstrap_data)
 
 # Plot all of the different skill scores, with 95% confidence intervals
-plot = bootstrap_data[K1 > K0][, let(
-    data_type = factor(data_type, levels = c("full", "local"), labels = c("Full", "Local")),
+plot = bootstrap_data[K1 > K0][K0 <= 20][K0 > 10][, let(
+    data_type = factor(data_type, levels = c("full"), labels = c("Full")),
     K1 = factor(K1, levels = chosen_Ks, labels = paste0("$K = ", chosen_Ks, "$")),
     K0 = factor(K0, levels = chosen_Ks, labels = paste0("$S_0: K = ", chosen_Ks, "$")),
     score_name = factor(score_name, levels = score_info$shortname)
@@ -947,7 +1024,8 @@ plot = bootstrap_data[K1 > K0][, let(
     aes(x = score_name, ymin = lower, ymax = upper, col = K1, group = K1),
     position = position_dodge(.3)
   ) +
-  facet_grid(data_type~K0) +
+  #facet_grid(data_type ~ K0) +
+  facet_wrap(~K0, nrow = 1) +
   theme_light() +
   theme(
     strip.text = element_text(colour = "black", size = rel(1)),
@@ -962,14 +1040,15 @@ plot = bootstrap_data[K1 > K0][, let(
 plot_tikz(
   file = file.path(image_dir, "precip_K_scores.pdf"),
   plot = plot,
-  width = 12,
-  height = 8
+  width = 10,
+  height = 5
 )
 
 # Find the best downscaling model for the best value of K
 # ------------------------------------------------------------------------------
 
-chosen_K = 25
+#chosen_K = 25
+chosen_K = 20
 data_types = c("era", "local", "full", "global")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
@@ -1094,7 +1173,7 @@ plot = ggplot() +
     crs = st_crs(plot_data)
   ) +
   labs(x = "", y = "", fill = "Skill\nscore") +
-  facet_wrap(~score_name, nrow = 3) +
+  facet_wrap(~score_name, nrow = 4) +
   theme_light() +
   theme(
     strip.text = element_text(colour = "black", size = rel(.8)),
@@ -1114,10 +1193,11 @@ plot = ggplot() +
 
 plot_tikz(
   file = file.path(image_dir, "precip_map_scores.pdf"),
+  #file = "Rplots.pdf",
   tex_engine = "lualatex",
   plot = plot,
   width = 11,
-  height = 8
+  height = 11
 )
 
 # Convert the plot to png, to reduce the size of the final paper
@@ -1366,8 +1446,8 @@ time_series_data = lapply(
       year = year(date),
       month = month(date),
       era_precip_bool = era_precip > 0,
+      station_elevation = log(station_elevation + 1),
       precip_bool = precip > 0,
-      log_precip = log(precip + 1),
       era_log_precip = log(era_precip + 1)
     )]
     data[, let(day_count = as.integer(date) - as.integer(min(date)) + 1L), by = "id"]
@@ -1445,7 +1525,11 @@ plot_data[, let(id = factor(id, levels = unique(time_series_data$id)))]
 plot_data = plot_data[order(id)]
 
 plot_data[, let(tag = paste(name, country, year(date), sep = ", "))]
-plot_data[, let(tag = factor(tag, levels = unique(tag), labels = paste0(seq_along(unique(tag)), ") ", unique(tag))))]
+plot_data[, let(tag = factor(
+  tag,
+  levels = unique(tag),
+  labels = paste0(seq_along(unique(tag)), ") ", unique(tag))
+))]
 plot_data[, let(yday = yday(date))]
 plot_data[, let(variable = factor(variable, levels = rev(levels(variable))))]
 
@@ -1492,7 +1576,7 @@ plot_tikz(
   height = 5
 )
 
-# Convert pdf to png, to reduce the size of the final paper 
+# Convert pdf to png, to reduce the size of the final paper
 pdf_convert(
   in_path = file.path(image_dir, "precip_time_series.pdf"),
   out_paths = file.path(image_dir, "precip_time_series.png"),

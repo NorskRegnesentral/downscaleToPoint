@@ -18,14 +18,12 @@ library(downscaleToPoint)
 # ------------------------------------------------------------------------------
 data_dir = file.path(here::here(), "raw_data")
 model_dir = file.path(data_dir, "models", "temperature")
-result_dir = file.path(data_dir, "results")
-image_dir = file.path(data_dir, "images")
+image_dir = file.path(data_dir, "images", "temperature")
 local_fits_dir = file.path(model_dir, "local_fits")
 cv_dir = file.path(data_dir, "cross-validation", "temperature")
 
 if (!dir.exists(model_dir)) dir.create(model_dir, recursive = TRUE)
-if (!dir.exists(result_dir)) dir.create(result_dir)
-if (!dir.exists(image_dir)) dir.create(image_dir)
+if (!dir.exists(image_dir)) dir.create(image_dir, recursive = TRUE)
 if (!dir.exists(local_fits_dir)) dir.create(local_fits_dir)
 if (!dir.exists(cv_dir)) dir.create(cv_dir, recursive = TRUE)
 
@@ -44,8 +42,9 @@ B = 1000 # Number of bootstraps to use when bootstrapping
 K_vals = c(5, 10, 15, 20, 25, 30)
 
 # Thresholds for computing threshold weighted IQD scores during the cross-validation
-upper_threshold_probs = c(.8, .9, .95, .99)
-lower_threshold_probs = c(.2, .1, .05, .01)
+#upper_threshold_probs = c(.8, .9, .95, .99)
+#lower_threshold_probs = c(.2, .1, .05, .01)
+threshold_probs = c(.001, .005, .01, .05, .1, .2, .5, .8, .9, .95, .99, .995, .999)
 
 # This is a data.frame containing information about all the different scoring functions
 # we want to evaluate in the cross-validation study
@@ -53,8 +52,8 @@ score_info = as.data.frame(t(do.call(cbind, list(
   c("rmse", "RMSE", 1),
   c("mae", "MAE", 1),
   c("iqd", "IQD", 1),
-  #c("lower_tw_iqd", "IQD95", 3),
-  #c("upper_tw_iqd", "IQD05", 3),
+  c("quantile_score", "Q01", 3),
+  c("quantile_score", "Q99", 11),
   c("weekly_mean_iqd", "WM", 1),
   c("weekly_sd_iqd", "WS", 1),
   c("monthly_mean_iqd", "MM", 1),
@@ -91,6 +90,7 @@ if (!file.exists(global_fit_path)) {
   # Add extra variables for the modelling
   data[, let(
     yday = yday(date),
+    station_elevation = log(station_elevation + 1),
     era_log_precip = log(era_precip + 1)
   )]
 
@@ -99,6 +99,7 @@ if (!file.exists(global_fit_path)) {
     s(era_log_precip) +
     s(station_elevation) +
     s(elevation_diff) +
+    s(grid_elevation_sd) +
     s(yday, bs = "cc") +
     s(lat, lon, bs = "sos", m = 2)
 
@@ -173,17 +174,23 @@ for (i in seq_along(plot_data)) {
   } else {
     title_name = factor(
       names(plot_data)[i],
-      levels = c("era_tmean", "era_log_precip", "station_elevation", "elevation_diff", "yday"),
+      levels = c(
+        "era_tmean", "era_log_precip", "station_elevation",
+        "elevation_diff", "yday", "grid_elevation_sd"
+      ),
       labels = c(
-        "ERA5 temperature", "ERA5 precipitation",
-        "Station elevation", "Elevation difference", "Temporal effect"
+        "ERA5 temperature", "ERA5 precipitation", "Station elevation",
+        "Elevation difference", "Seasonal effect", "ERA5 elevation SD"
       )
     )
     x_name = factor(
       names(plot_data)[i],
-      levels = c("era_tmean", "era_log_precip", "station_elevation", "elevation_diff", "yday"),
+      levels = c(
+        "era_tmean", "era_log_precip", "station_elevation",
+        "elevation_diff", "yday", "grid_elevation_sd"
+      ),
       labels = c(
-        "$^\\circ$C", "mm/day", "m.a.s.l.", "m", "Day of the year"
+        "$^\\circ$C", "mm/day", "m.a.s.l.", "m", "Day of the year", "m"
       )
     )
     plots[[i]] = plots[[i]] +
@@ -192,34 +199,38 @@ for (i in seq_along(plot_data)) {
       theme(axis.title.y = element_text(angle = 0, vjust = .5))
     if (title_name == "ERA5 precipitation") {
       plots[[i]] = plots[[i]] + scale_x_continuous(
-        breaks = log(c(0, 2^(0:9)) + 1),
-        labels = c(0, 2^(0:9))
+        breaks = log(c(0, 2^seq(0, 20, by = 2)) + 1),
+        labels = c(0, 2^seq(0, 20, by = 2))
       )
     } else if (title_name == "Station elevation") {
       plots[[i]] = plots[[i]] + scale_x_continuous(
-        breaks = asinh(c(0, 2^seq(0, 14, by = 2))),
-        labels = c(0, 2^seq(0, 14, by = 2))
-      )
-    } else if (title_name == "Elevation difference") {
-      plots[[i]] = plots[[i]] + scale_x_continuous(
-        breaks = asinh(c(-2^seq(14, 2, by = -4), 0, 2^seq(2, 14, by = 4))),
-        labels = c(-2^seq(14, 2, by = -4), 0, 2^seq(2, 14, by = 4))
+        breaks = log(c(0, 2^seq(0, 20, by = 3)) + 1),
+        labels = c(0, 2^seq(0, 20, by = 3))
       )
     }
+    #} else if (title_name == "Elevation difference") {
+    #  plots[[i]] = plots[[i]] + scale_x_continuous(
+    #    breaks = asinh(c(-2^seq(14, 2, by = -4), 0, 2^seq(2, 14, by = 4))),
+    #    labels = c(-2^seq(14, 2, by = -4), 0, 2^seq(2, 14, by = 4))
+    #  )
+    # }
   }
 }
 
-plot = patchwork::wrap_plots(
-  plots,
-  heights = rep(1, 2),
-  widths = rep(1, 3)
-)
+plot_design = "
+aaccee##
+aacceegg
+bbddffgg
+bbddff##
+"
+
+plot = patchwork::wrap_plots(plots, design = plot_design)
 
 plot_tikz(
   file = file.path(image_dir, "global_temp_model.pdf"),
   plot = plot,
-  width = 12,
-  height = 7
+  width = 14,
+  height = 6
 )
 
 # ==============================================================================
@@ -253,6 +264,7 @@ fits = parallel::mclapply(
     # Add extra variables for the modelling
     data[, let(
       yday = yday(date),
+      station_elevation = log(station_elevation + 1),
       era_log_precip = log(era_precip + 1)
     )]
 
@@ -263,8 +275,9 @@ fits = parallel::mclapply(
     data$tmean_offset = fast_mgcv_pred(global_fit, data) + data$era_tmean
 
     formula = tmean ~
-      s(era_tmean) +
       era_log_precip +
+      #s(era_log_precip) +
+      s(era_tmean) +
       s(yday, bs = "cc")
     environment(formula) = NULL
 
@@ -310,7 +323,7 @@ fits = parallel::mclapply(
     arma_fit$model = list()
     if (arma_fit$arma[1] > 0) arma_fit$model$ar = head(arma_fit$coef, arma_fit$arma[1])
     if (arma_fit$arma[2] > 0) arma_fit$model$ma = tail(arma_fit$coef, arma_fit$arma[2])
-    
+
     # Save the local model fits
     res = data.table(
       id = station_meta$id[i],
@@ -430,7 +443,8 @@ for (K in K_vals) {
         p2 = station_meta[, cbind(lon, lat)]
       )
 
-      # Locate and load the local models from the K nearest weather stations to weather station nr. i
+      # Locate and load the local models from the K nearest weather stations
+      # to weather station nr. i
       nearest_index = order(dists)[-1][seq_len(K)]
       local_fits = lapply(
         X = seq_along(nearest_index),
@@ -450,6 +464,7 @@ for (K in K_vals) {
       data[, let(
         yday = yday(date),
         year = year(date),
+        station_elevation = log(station_elevation + 1),
         era_log_precip = log(era_precip + 1)
       )]
       data[, let(day_count = as.integer(date) - as.integer(min(date)) + 1L), by = "id"]
@@ -488,16 +503,26 @@ for (K in K_vals) {
       }
 
       # Compute temperature values for the local and the global deterministic downscaling models
-      sims$global_deterministic = matrix(rep(data$tmean_offset, n_sims), nrow = nrow(data), ncol = n_sims)
+      sims$global_deterministic = matrix(
+        rep(data$tmean_offset, n_sims),
+        nrow = nrow(data),
+        ncol = n_sims
+      )
       local_deterministic_donors = seq_len(K)
-      if (length(bad_local_donors) > 0) local_deterministic_donors = local_deterministic_donors[-bad_local_donors]
+      if (length(bad_local_donors) > 0) {
+        local_deterministic_donors = local_deterministic_donors[-bad_local_donors]
+      }
       sims$local_deterministic = sapply(
         X = local_deterministic_donors,
         FUN = function(j) {
           fast_mgcv_pred(local_fits$marginal_fit[[j]], data) + data$tmean_offset
         })
       sims$local_deterministic = apply(sims$local_deterministic, 1, mean)
-      sims$local_deterministic = matrix(rep(sims$local_deterministic, n_sims), nrow = nrow(data), ncol = n_sims)
+      sims$local_deterministic = matrix(
+        rep(sims$local_deterministic, n_sims),
+        nrow = nrow(data),
+        ncol = n_sims
+      )
 
       # Simulate temperature data using the full model, including both local GAMs and ARMA models
       set.seed(1)
@@ -560,56 +585,80 @@ for (K in K_vals) {
       sim_mae = sapply(median_sim, mae, x = data$tmean)
       era_mae = mae(data$tmean, data$era_tmean)
       res$mae = list(c(era = era_mae, sim_mae))
-      
+
       # Compare marginal distributions of all daily temperature means
       era_iqd = iqd(data$era_tmean, data$tmean)
       sims_iqd = sapply(sims, function(x) iqd(as.vector(x), y = data$tmean))
       res$iqd = list(c(era = era_iqd, sims_iqd))
 
-      # Compute threshold weighted IQD
-      upper_thresholds = quantile(data$tmean, upper_threshold_probs)
-      n_obs_above_upper_thresholds = sapply(upper_thresholds, function(t) sum(data$tmean >= t))
-      era_upper_tw_iqd = sapply(
-        X = upper_thresholds,
-        FUN = function(threshold) {
-          iqd(data$era_tmean, data$tmean, w = function(x) as.numeric(x >= threshold))
-        }
+      # Compute quantile scores
+      quantile_score = function(prob, pred, obs) {
+        q = quantile(pred, probs = prob)
+        mean(2 * (as.numeric(obs <= q) - prob) * (q - obs))
+      }
+      era_quantile_score = sapply(
+        X = threshold_probs,
+        FUN = quantile_score,
+        pred = data$era_tmean,
+        obs = data$tmean
       )
-      sim_upper_tw_iqd = sapply(
+      sims_quantile_score = sapply(
         X = sims,
         FUN = function(sim) {
           sapply(
-            X = upper_thresholds,
-            FUN = function(threshold) {
-              iqd(sim, data$tmean, w = function(x) as.numeric(x >= threshold))
-            }
+            X = threshold_probs,
+            FUN = quantile_score,
+            pred = sim,
+            obs = data$tmean
           )
         }
       )
-      res$upper_tw_iqd = list(cbind(era = era_upper_tw_iqd, sim_upper_tw_iqd))
-      res$n_obs_above_upper_thresholds = list(n_obs_above_upper_thresholds)
+      res$quantile_score = list(cbind(era = era_quantile_score, sims_quantile_score))
 
-      lower_thresholds = quantile(data$tmean, lower_threshold_probs)
-      n_obs_below_lower_thresholds = sapply(lower_thresholds, function(t) sum(data$tmean <= t))
-      era_lower_tw_iqd = sapply(
-        X = lower_thresholds,
-        FUN = function(threshold) {
-          iqd(data$era_tmean, data$tmean, w = function(x) as.numeric(x <= threshold))
-        }
-      )
-      sim_lower_tw_iqd = sapply(
-        X = sims,
-        FUN = function(sim) {
-          sapply(
-            X = lower_thresholds,
-            FUN = function(threshold) {
-              iqd(sim, data$tmean, w = function(x) as.numeric(x <= threshold))
-            }
-          )
-        }
-      )
-      res$lower_tw_iqd = list(cbind(era = era_lower_tw_iqd, sim_lower_tw_iqd))
-      res$n_obs_below_lower_thresholds = list(n_obs_below_lower_thresholds)
+      # # Compute threshold weighted IQD
+      # upper_thresholds = quantile(data$tmean, upper_threshold_probs)
+      # n_obs_above_upper_thresholds = sapply(upper_thresholds, function(t) sum(data$tmean >= t))
+      # era_upper_tw_iqd = sapply(
+      #   X = upper_thresholds,
+      #   FUN = function(threshold) {
+      #     iqd(data$era_tmean, data$tmean, w = function(x) as.numeric(x >= threshold))
+      #   }
+      # )
+      # sim_upper_tw_iqd = sapply(
+      #   X = sims,
+      #   FUN = function(sim) {
+      #     sapply(
+      #       X = upper_thresholds,
+      #       FUN = function(threshold) {
+      #         iqd(sim, data$tmean, w = function(x) as.numeric(x >= threshold))
+      #       }
+      #     )
+      #   }
+      # )
+      # res$upper_tw_iqd = list(cbind(era = era_upper_tw_iqd, sim_upper_tw_iqd))
+      # res$n_obs_above_upper_thresholds = list(n_obs_above_upper_thresholds)
+
+      # lower_thresholds = quantile(data$tmean, lower_threshold_probs)
+      # n_obs_below_lower_thresholds = sapply(lower_thresholds, function(t) sum(data$tmean <= t))
+      # era_lower_tw_iqd = sapply(
+      #   X = lower_thresholds,
+      #   FUN = function(threshold) {
+      #     iqd(data$era_tmean, data$tmean, w = function(x) as.numeric(x <= threshold))
+      #   }
+      # )
+      # sim_lower_tw_iqd = sapply(
+      #   X = sims,
+      #   FUN = function(sim) {
+      #     sapply(
+      #       X = lower_thresholds,
+      #       FUN = function(threshold) {
+      #         iqd(sim, data$tmean, w = function(x) as.numeric(x <= threshold))
+      #       }
+      #     )
+      #   }
+      # )
+      # res$lower_tw_iqd = list(cbind(era = era_lower_tw_iqd, sim_lower_tw_iqd))
+      # res$n_obs_below_lower_thresholds = list(n_obs_below_lower_thresholds)
 
       # Compare marginal distributions for all n-day differences, with n in `diff_lengths`
       # This is easiest to do if we first expand `data` so it contains one row for every
@@ -628,7 +677,9 @@ for (K in K_vals) {
       # Compute all n-day differences for ERA
       era_diffs = lapply(
         diff_lengths,
-        function(j) tail(data_with_all_dates$era_tmean, -j) - head(data_with_all_dates$era_tmean, -j)
+        function(j) {
+          tail(data_with_all_dates$era_tmean, -j) - head(data_with_all_dates$era_tmean, -j)
+        }
       )
       # Compute all n-day differences for each simulated ensemble member
       non_na_index = which(!is.na(data_with_all_dates$tmean))
@@ -658,9 +709,9 @@ for (K in K_vals) {
           )
         })
       res$diff_iqd = list(cbind(era = era_diff_iqd, sims_diff_iqd))
-      
-      # Compare marginal distributions for the weekly means and standard deviations of temperature data
-      # from observations, ERA5 and simulated temperature.
+
+      # Compare marginal distributions for the weekly means and standard deviations of
+      # temperature data from observations, ERA5 and simulated temperature.
       #
       # week_indices is a data.table, describing which rows of `data` that contain data from which
       # week/year combinations
@@ -777,24 +828,13 @@ for (i in seq_along(eval_files)) {
 pb$terminate()
 eval = rbindlist(eval, fill = TRUE)
 
-if (FALSE) {
-  tmp = eval[K == chosen_K]
-  y_local = sapply(tmp$lower_tw_iqd, function(x) x[2, 4])
-  y_full = sapply(tmp$lower_tw_iqd, function(x) x[2, 5])
-
-  summary(y_local / y_full)
-  summary(y_full / y_local)
-  y_full / y_local
-  y_local / y_full
-}
 
 # Find the best value of K
 # ------------------------------------------------------------------------------
 
 # Which values of K and which models should we evaluate?
-chosen_Ks = c(5, 10, 15, 20)
-#chosen_Ks = c(5, 10, 20, 25)
-data_types = c("local_deterministic", "full")
+chosen_Ks = c(5, 10, 15, 20, 25, 30)
+data_types = c("full")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
 set.seed(1)
@@ -813,11 +853,11 @@ for (i in seq_len(nrow(score_info))) {
 bootstrap_data = rbindlist(bootstrap_data)
 
 # Plot all of the different skill scores, with 95% confidence intervals
-plot = bootstrap_data[K1 > K0][, let(
+plot = bootstrap_data[K1 > K0][K0 <= 10][K0 < 20][, let(
   data_type = factor(
     data_type,
-    levels = c("full", "local_deterministic"),
-    labels = c("Full", "Local deterministic")
+    levels = c("full"),
+    labels = c("Full")
   ),
   K1 = factor(K1, levels = chosen_Ks, labels = paste0("$K = ", chosen_Ks, "$")),
   K0 = factor(K0, levels = chosen_Ks, labels = paste0("$S_0: K = ", chosen_Ks, "$")),
@@ -834,7 +874,7 @@ plot = bootstrap_data[K1 > K0][, let(
     aes(x = score_name, ymin = lower, ymax = upper, col = K1, group = K1),
     position = position_dodge(.3)
   ) +
-  facet_grid(data_type ~ K0) +
+  facet_wrap(~K0, nrow = 1) +
   theme_light() +
   theme(
     strip.text = element_text(colour = "black", size = rel(1)),
@@ -849,14 +889,15 @@ plot = bootstrap_data[K1 > K0][, let(
 plot_tikz(
   file = file.path(image_dir, "temp_K_scores.pdf"),
   plot = plot,
-  width = 11,
-  height = 8
+  width = 10,
+  height = 5
 )
 
 # Find the best downscaling model for the best value of K
 # ------------------------------------------------------------------------------
 
-chosen_K = 15
+#chosen_K = 15
+chosen_K = 10
 data_types = c("era", "local_deterministic", "full", "global_deterministic")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
@@ -1249,6 +1290,7 @@ time_series_data = lapply(
     data[, let(
       yday = yday(date),
       year = year(date),
+      station_elevation = log(station_elevation + 1),
       era_log_precip = log(era_precip + 1)
     )]
     data[, let(day_count = as.integer(date) - as.integer(min(date)) + 1L), by = "id"]
@@ -1325,7 +1367,11 @@ plot_data[, let(id = factor(id, levels = unique(time_series_data$id)))]
 plot_data = plot_data[order(id)]
 
 plot_data[, let(tag = paste(name, country, year(date), sep = ", "))]
-plot_data[, let(tag = factor(tag, levels = unique(tag), labels = paste0(seq_along(unique(tag)), ") ", unique(tag))))]
+plot_data[, let(tag = factor(
+  tag,
+  levels = unique(tag),
+  labels = paste0(seq_along(unique(tag)), ") ", unique(tag))
+))]
 plot_data[, let(yday = yday(date))]
 plot_data[, let(variable = factor(variable, levels = rev(levels(variable))))]
 
@@ -1372,7 +1418,7 @@ plot_tikz(
   height = 5
 )
 
-# Convert pdf to png, to reduce the size of the final paper 
+# Convert pdf to png, to reduce the size of the final paper
 pdf_convert(
   in_path = file.path(image_dir, "temp_time_series.pdf"),
   out_paths = file.path(image_dir, "temp_time_series.png"),
