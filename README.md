@@ -1,7 +1,7 @@
 
 # downscaleToPoint
 
-This package contains the necessary code and data for reproducing all results in the paper "Simulation and evaluation of local daily temperature and precipitation series derived by stochastic downscaling of ERA5 reanalysis".
+This package contains the necessary code and data for reproducing all results in the paper "Simulation and evaluation of local daily temperature and precipitation series derived by stochastic downscaling of ERA5 reanalysis", available at [https://arxiv.org/abs/2507.01692](https://arxiv.org/abs/2507.01692).
 
 The scripts used for creating all relevant results and figures are available in the `exec/`
 folder. This folder contains five scripts:
