@@ -16,6 +16,12 @@ library(dplyr)
 
 "I should try to use INLA with a rw1/rw2 structure for the precipitation occurrence, to see if that improves the model."
 
+"Regarding the comment about spatial coherence, when downscaling to multiple locations:
+- If the locations have available data, we can use Schaake shuffle-ing. But having data defeats the purpose...
+- I think the order we choose to combine ensemble members matters a lot, and that is something we need to decide ourselves, if we don't have any data.
+- We could maybe use the Schaake Shuffle from neighbouring stations to improve the matching of the temperature/precipitation ensemble members! But we use quite few simulations per station, and that might cause problems. But it is worth writing about in the discussion!
+"
+
 
 # Define all necessary paths
 # ------------------------------------------------------------------------------
