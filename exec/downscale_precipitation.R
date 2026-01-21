@@ -1,6 +1,5 @@
 library(data.table)
 library(mgcv)
-library(here)
 library(ggplot2)
 library(forecast)
 library(matrixStats)
@@ -15,13 +14,16 @@ library(downscaleToPoint)
 library(patchwork)
 library(dplyr)
 
+"I should try to use INLA with a rw1/rw2 structure for the precipitation occurrence, to see if that improves the model."
+
+
 # Define all necessary paths
 # ------------------------------------------------------------------------------
-data_dir = file.path(here::here(), "raw_data")
+data_dir = "/nr/samba/user/smvandeskog/projects/downscaleToPoint/data/"
 model_dir = file.path(data_dir, "models", "precipitation")
-image_dir = file.path(data_dir, "images", "precipitation_new")
+image_dir = file.path(data_dir, "images", "precipitation")
 local_fits_dir = file.path(model_dir, "local_fits")
-cv_dir = file.path(data_dir, "cross-validation", "precipitation_new")
+cv_dir = file.path(data_dir, "cross-validation", "precipitation")
 
 if (!dir.exists(model_dir)) dir.create(model_dir, recursive = TRUE)
 if (!dir.exists(image_dir)) dir.create(image_dir, recursive = TRUE)
@@ -104,8 +106,6 @@ if (!file.exists(global_fit_path)) {
     era_log_precip = log(era_precip + 1)
   )]
 
-  t1 = Sys.time()
-
   # Formula for the occurrence model
   formula = precip_bool ~
     era_precip_bool +
@@ -161,8 +161,6 @@ if (!file.exists(global_fit_path)) {
     "residuals", "fitted.values", "linear.predictors")
   intensity_fit[unneccessary_vars] = NULL
   gc()
-
-  t2 = Sys.time()
 
   # Save the results
   saveRDS(
@@ -1222,7 +1220,11 @@ plot_data = rbind(
 plot_data[, let(
   both = list(c(value[variable == "full"], value[variable == "era"]))
 ), by = c("id", "tag")]
-plot_data = merge(plot_data, station_meta[, .(id, lon, lat, elev)], by = "id")
+plot_data = merge(
+  plot_data,
+  station_meta[, .(id, lon, lat, elev, elev_mean, elev_sd)],
+  by = "id"
+)
 
 precip_data = load_station_data(
   meta = station_meta,
@@ -1239,8 +1241,38 @@ precip_data = precip_data[, .(
   precip = sum(precip),
   era_precip = sum(era_precip)
 ), by = "id"]
+
 plot_data = merge(plot_data, precip_data[, .(id, precip, era_precip)], by = "id")
-plot_data[, let(precip_diff = precip - era_precip)]
+plot_data[, let(
+  precip_diff = precip - era_precip,
+  elev_diff = elev - elev_mean
+)]
+
+if (FALSE) {
+
+  plots = list()
+  plots[[1]] = ggplot(plot_data) +
+    geom_point(aes(x = precip, y = value), alpha = .4) +
+    facet_grid(variable ~ tag)
+  plots[[2]] = ggplot(plot_data) +
+    geom_point(aes(x = precip_diff, y = value), alpha = .4) +
+    facet_grid(variable ~ tag)
+  plots[[3]] = ggplot(plot_data) +
+    geom_point(aes(x = elev_diff, y = value), alpha = .4) +
+    facet_grid(variable ~ tag)
+  plots[[4]] = ggplot(plot_data) +
+    geom_point(aes(x = abs(elev_diff), y = value), alpha = .4) +
+    facet_grid(variable ~ tag)
+  plots[[5]] = ggplot(plot_data) +
+    geom_point(aes(x = elev_sd, y = value), alpha = .4) +
+    facet_grid(variable ~ tag)
+
+  pdf("Rplots.pdf")
+  for (plot in plots) print(plot)
+  dev.off()
+
+}
+
 
 plot_data = st_as_sf(
   plot_data,

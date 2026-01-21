@@ -1,6 +1,5 @@
 library(data.table)
 library(mgcv)
-library(here)
 library(ggplot2)
 library(forecast)
 library(matrixStats)
@@ -16,7 +15,7 @@ library(downscaleToPoint)
 
 # Define all necessary paths
 # ------------------------------------------------------------------------------
-data_dir = file.path(here::here(), "raw_data")
+data_dir = "/nr/samba/user/smvandeskog/projects/downscaleToPoint/data/"
 model_dir = file.path(data_dir, "models", "temperature")
 image_dir = file.path(data_dir, "images", "temperature")
 local_fits_dir = file.path(model_dir, "local_fits")
@@ -1070,8 +1069,13 @@ plot_data = rbind(
 plot_data[, let(
   both = list(c(value[variable == "full"], value[variable == "era"]))
 ), by = c("id", "tag")]
-plot_data = merge(plot_data, station_meta[, .(id, lon, lat, elev, elev_mean)], by = "id")
+plot_data = merge(
+  plot_data,
+  station_meta[, .(id, lon, lat, elev, elev_mean, elev_sd)],
+  by = "id"
+)
 plot_data[, let(elev_diff = elev - elev_mean)]
+
 
 tmean_data = load_station_data(
   meta = station_meta,
@@ -1089,6 +1093,28 @@ tmean_data = tmean_data[, .(
 ), by = "id"]
 
 plot_data = merge(plot_data, tmean_data[, .(id, tmean, era_tmean)], by = "id")
+
+if (FALSE) {
+
+  plots = list()
+  plots[[1]] = ggplot(plot_data) +
+    geom_point(aes(x = tmean, y = value), alpha = .4) +
+    facet_grid(variable ~ tag)
+  plots[[2]] = ggplot(plot_data) +
+    geom_point(aes(x = elev_diff, y = value), alpha = .4) +
+    facet_grid(variable ~ tag)
+  plots[[3]] = ggplot(plot_data) +
+    geom_point(aes(x = abs(elev_diff), y = value), alpha = .4) +
+    facet_grid(variable ~ tag)
+  plots[[4]] = ggplot(plot_data) +
+    geom_point(aes(x = elev_sd, y = value), alpha = .4) +
+    facet_grid(variable ~ tag)
+
+  pdf("Rplots.pdf")
+  for (plot in plots) print(plot)
+  dev.off()
+  
+}
 
 plot_data = st_as_sf(
   plot_data,
