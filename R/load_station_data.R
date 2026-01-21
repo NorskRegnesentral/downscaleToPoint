@@ -31,9 +31,11 @@ load_station_data = function(meta,
   data = vector("list", nrow(meta))
   pb = progress_bar(nrow(meta))
   for (i in seq_len(nrow(meta))) {
-    gsod_data = readRDS(file.path(data_dir, "gsod", paste0(meta$id[i], ".rds")))
-    era_data = readRDS(file.path(data_dir, "era", paste0(meta$id[i], ".rds")))
-    era_data = rbindlist(era_data)
+    gsod_files = list.files(file.path(data_dir, "gsod", meta$id[i]), full.names = TRUE)
+    gsod_data = data.table::rbindlist(lapply(gsod_files, readRDS))
+    gsod_years = unique(data.table::year(gsod_data$date))
+    era_files = file.path(data_dir, "era", meta$id[i], paste0(gsod_years, ".rds"))
+    era_data = data.table::rbindlist(lapply(era_files, readRDS))
     setnames(era_data, c("total_precipitation", "2m_temperature"), c("era_precip", "era_tmean"))
     gsod_data[, let(tmin = NULL, tmax = NULL)]
     # Change the precip units to mm/day and the tmean units to Celsius
