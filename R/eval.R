@@ -52,7 +52,7 @@ bootstrap_skillscores = function(data,
 
   # Loop over different combinations of K_vals and data_types, and compute skill scores
   # with bootstrapped uncertainty intervals.
-  # 
+  #
   # If we have multiple K_vals, then we need to loop over all pairwise combination of K_vals
   # for each value of data_types. Similarly, if we have multiple data_types, then we need to
   # loop over all pairwise combinations of data_types for each value of K_vals
@@ -69,7 +69,7 @@ bootstrap_skillscores = function(data,
           s0_vals = sapply(data[[as.character(K0)]], `[[`, data_type)
           # Compute the actual skill score
           truth = skill_score(s1 = mean(s1_vals), s0 = mean(s0_vals))
-          
+
           # Compute the bootstrapped skill scores
           bootstraps = sapply(
             X = seq_len(B),

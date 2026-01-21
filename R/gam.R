@@ -16,8 +16,10 @@ fast_mgcv_pred = function(fit, data, detailed = FALSE) {
   for (smooth in fit[["smooth"]]) {
     terms = smooth[["term"]]
     compressed_data = unique(data[, ..terms])
-    X = mgcv::PredictMat(smooth, compressed_data)
     beta = fit[["coefficients"]][seq(smooth[["first.para"]], smooth[["last.para"]], by = 1)]
+    na_rows = apply(compressed_data, 1, function(x) any(is.na(x)))
+    X = matrix(NA_real_, nrow = nrow(compressed_data), ncol = length(beta))
+    X[!na_rows, ] = mgcv::PredictMat(smooth, compressed_data[!na_rows, , drop = FALSE])
     compressed_data$pred = as.vector(X %*% beta)
     pred = merge(data[, ..terms], compressed_data, by = terms, sort = FALSE)[["pred"]]
     preds[[paste(terms, collapse = ":")]] = pred
