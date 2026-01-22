@@ -14,6 +14,13 @@ library(downscaleToPoint)
 library(patchwork)
 library(dplyr)
 
+"
+We can use an AR process, but I am unsure if that gives us the effect we want.
+But it is possible!
+And maybe we can do it in a third step, just as before. Using the second step as
+an offset and having no other model components?
+"
+
 "I should try to use INLA with a rw1/rw2 structure for the precipitation occurrence, to see if that improves the model."
 
 "Regarding the comment about spatial coherence, when downscaling to multiple locations:
@@ -384,6 +391,93 @@ fits = parallel::mclapply(
       discrete = TRUE,
       control = list(trace = FALSE)
     )
+
+    tmptmp = fast_mgcv_pred(occurrence_fit, data)
+
+    head(occurrence_fit$linear.predictor)
+    head(occurrence_fit$fitted.values)
+    head(tmptmp)
+
+    if (FALSE) {
+
+      data$precip_bool = as.integer(data$precip_bool)
+
+      library(fmesher)
+      library(inlabru)
+
+      mesh_logprec <- fmesher::fm_mesh_1d(
+        loc = data[!is.na(precip), quantile(era_log_precip, seq(0, 1, by = .05))],
+        boundary = "free",   # or c("free", "free")
+        degree = 2,
+      )
+
+      mesh_tmean <- fmesher::fm_mesh_1d(
+        loc = data[!is.na(precip), quantile(era_tmean, seq(0, 1, by = .05))],
+        boundary = "free",   # or c("free", "free")
+        degree = 2           # 2 = quadratic FE, similar to RW2 smooth
+      )
+
+      spde_logprec <- inla.spde2.pcmatern(
+        mesh = mesh_logprec,
+        alpha = 2,
+        prior.range = c(4, 0.9),
+        prior.sigma = c(2, 0.01)
+      )
+
+      spde_tmean <- inla.spde2.pcmatern(
+        mesh = mesh_tmean,
+        alpha = 2,
+        prior.range = c(1, 0.1),
+        prior.sigma = c(.1, 0.9)
+      )
+
+      cmp <- precip_bool ~
+        Intercept(1) +
+        day_ar(day_count, model = "ar1") +
+        era_precip_bool +
+        logprec(era_log_precip, model = spde_logprec) +
+        tmean(era_tmean, model = spde_tmean) +
+        yday_smooth(yday, model = "rw2", cyclic = TRUE) +
+        offset(occurrence_offset)
+
+      fit2 <- inlabru::bru(
+        cmp,
+        family = "binomial",
+        data = data[!is.na(precip)],
+        formula = precip_bool ~ .,
+        options = list(
+          control.predictor = list(compute = FALSE),
+          control.inla = list(int.strategy = "eb"),
+          verbose = TRUE,
+          num.threads = 1
+        )
+      )
+
+      summary(fit2)
+
+      rho = fit2$summary.hyperpar$mean[2]
+      kappa = fit2$summary.hyperpar$mean[1]
+      tau = kappa / (1 - rho^2)
+      s = tau^-.5
+
+      model = list(ar = rho)
+
+      tmp = arima.sim(
+        model = list(ar = rho),
+        n = nrow(data),
+        sd = s
+      )
+
+      fit2$
+
+      fit2$summary.fitted.values$mean |> summary()
+
+      1 / fit2$summary.hyperpar[1, ]
+      
+    }
+
+
+    
 
     # Remove unneccesary variables that take up a lot of memory
     unneccessary_vars = c("wt", "y", "prior.weights", "model", "offset", "weights",
