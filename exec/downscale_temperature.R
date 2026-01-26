@@ -420,6 +420,8 @@ global_fit = readRDS(global_fit_path)
 overwrite = FALSE
 start_time = Sys.time()
 for (K in K_vals) {
+  out_dir = file.path(cv_dir, paste0(K, "_neighbours"))
+  if (!dir.exists(out_dir)) dir.create(out_dir)
   parallel::mclapply(
     X = seq_len(nrow(station_meta)),
     mc.cores = n_cores,
@@ -433,7 +435,7 @@ for (K in K_vals) {
         ". Time passed: ", round(as.numeric(time_passed), 2), " ", attr(time_passed, "units")
       )
 
-      out_path = file.path(cv_dir, paste0(station_meta$id[i], "_", K, "-neighbours.rds"))
+      out_path = file.path(out_dir, paste0(station_meta$id[i], ".rds"))
       if (!overwrite && file.exists(out_path)) return(TRUE)
 
       # Compute distances to all other weather stations
@@ -614,51 +616,6 @@ for (K in K_vals) {
       )
       res$quantile_score = list(cbind(era = era_quantile_score, sims_quantile_score))
 
-      # # Compute threshold weighted IQD
-      # upper_thresholds = quantile(data$tmean, upper_threshold_probs)
-      # n_obs_above_upper_thresholds = sapply(upper_thresholds, function(t) sum(data$tmean >= t))
-      # era_upper_tw_iqd = sapply(
-      #   X = upper_thresholds,
-      #   FUN = function(threshold) {
-      #     iqd(data$era_tmean, data$tmean, w = function(x) as.numeric(x >= threshold))
-      #   }
-      # )
-      # sim_upper_tw_iqd = sapply(
-      #   X = sims,
-      #   FUN = function(sim) {
-      #     sapply(
-      #       X = upper_thresholds,
-      #       FUN = function(threshold) {
-      #         iqd(sim, data$tmean, w = function(x) as.numeric(x >= threshold))
-      #       }
-      #     )
-      #   }
-      # )
-      # res$upper_tw_iqd = list(cbind(era = era_upper_tw_iqd, sim_upper_tw_iqd))
-      # res$n_obs_above_upper_thresholds = list(n_obs_above_upper_thresholds)
-
-      # lower_thresholds = quantile(data$tmean, lower_threshold_probs)
-      # n_obs_below_lower_thresholds = sapply(lower_thresholds, function(t) sum(data$tmean <= t))
-      # era_lower_tw_iqd = sapply(
-      #   X = lower_thresholds,
-      #   FUN = function(threshold) {
-      #     iqd(data$era_tmean, data$tmean, w = function(x) as.numeric(x <= threshold))
-      #   }
-      # )
-      # sim_lower_tw_iqd = sapply(
-      #   X = sims,
-      #   FUN = function(sim) {
-      #     sapply(
-      #       X = lower_thresholds,
-      #       FUN = function(threshold) {
-      #         iqd(sim, data$tmean, w = function(x) as.numeric(x <= threshold))
-      #       }
-      #     )
-      #   }
-      # )
-      # res$lower_tw_iqd = list(cbind(era = era_lower_tw_iqd, sim_lower_tw_iqd))
-      # res$n_obs_below_lower_thresholds = list(n_obs_below_lower_thresholds)
-
       # Compare marginal distributions for all n-day differences, with n in `diff_lengths`
       # This is easiest to do if we first expand `data` so it contains one row for every
       # single date within `range(data$date)`
@@ -817,7 +774,7 @@ for (K in K_vals) {
 }
 
 # Load all eval data from the cross-validation experiment
-eval_files = list.files(cv_dir, full.names = TRUE)
+eval_files = list.files(cv_dir, full.names = TRUE, recursive = TRUE)
 eval = vector("list", length(eval_files))
 pb = progress_bar(length(eval_files))
 for (i in seq_along(eval_files)) {
