@@ -21,12 +21,8 @@ And maybe we can do it in a third step, just as before. Using the second step as
 an offset and having no other model components?
 "
 
-"I should try to use INLA with a rw1/rw2 structure for the precipitation occurrence, to see if that improves the model."
-
-"Regarding the comment about spatial coherence, when downscaling to multiple locations:
-- If the locations have available data, we can use Schaake shuffle-ing. But having data defeats the purpose...
-- I think the order we choose to combine ensemble members matters a lot, and that is something we need to decide ourselves, if we don't have any data.
-- We could maybe use the Schaake Shuffle from neighbouring stations to improve the matching of the temperature/precipitation ensemble members! But we use quite few simulations per station, and that might cause problems. But it is worth writing about in the discussion!
+"
+We could maybe use the Schaake Shuffle from neighbouring stations to improve the matching of the temperature/precipitation ensemble members! But we use quite few simulations per station, and that might cause problems. But it is worth writing about in the discussion!
 "
 
 
@@ -106,7 +102,6 @@ if (!file.exists(global_fit_path)) {
     meta = station_meta,
     data_dir = data_dir,
     verbose = TRUE,
-    era_stats = TRUE,
     rm_bad_flags = TRUE
   )
 
@@ -118,33 +113,6 @@ if (!file.exists(global_fit_path)) {
     station_elevation = log(station_elevation + 1),
     era_log_precip = log(era_precip + 1)
   )]
-
-  # Formula for the occurrence model
-  formula = precip_bool ~
-    era_precip_bool +
-    s(era_log_precip) +
-    s(station_elevation) +
-    s(elevation_diff) +
-    s(grid_elevation_sd) +
-    s(era_tmean) +
-    s(yday, bs = "cc") +
-    s(lon, lat, bs = "sos")
-
-  # Fit the occurrence model
-  occurrence_fit = bam(
-    formula = formula,
-    family = binomial(),
-    data = data,
-    discrete = TRUE,
-    samfrac = .1,
-    control = list(trace = TRUE)
-  )
-
-  # Remove unneccesary variables that take up a lot of memory
-  unneccessary_vars = c("wt", "y", "prior.weights", "model", "offset", "weights",
-    "residuals", "fitted.values", "linear.predictors")
-  occurrence_fit[unneccessary_vars] = NULL
-  gc()
 
   # Formula for the intensity model
   formula = precip ~
@@ -175,9 +143,79 @@ if (!file.exists(global_fit_path)) {
   intensity_fit[unneccessary_vars] = NULL
   gc()
 
+  data[, let(time_diff = c(as.integer(diff(date)), NA_integer_)), by = "id"]
+  data = data[time_diff == 1]
+
+  data = data[, .(
+    precip_bool_change = (tail(precip_bool, -1) != head(precip_bool, -1)),
+    precip_bool = head(precip_bool, -1),
+    era_precip_bool = head(era_precip_bool, -1),
+    next_era_precip_bool = tail(era_precip_bool, -1),
+    era_log_precip = head(era_log_precip, -1),
+    next_era_log_precip = tail(era_log_precip, -1),
+    era_tmean = head(era_tmean, -1),
+    next_era_tmean = tail(era_tmean, -1),
+    yday = head(yday, -1),
+    lon = lon[1],
+    lat = lat[1],
+    station_elevation = station_elevation[1],
+    grid_elevation_sd = grid_elevation_sd[1],
+    elevation_diff = elevation_diff[1]
+  ), by = "id"]
+
+  data[, let(
+    era_log_precip_change = next_era_log_precip - era_log_precip,
+    era_tmean_change = next_era_tmean - era_tmean
+  )]
+
+  # Formula for the occurrence models
+  formula = precip_bool_change ~
+    era_precip_bool +
+    next_era_precip_bool +
+    s(era_log_precip) +
+    s(era_log_precip_change) +
+    s(era_tmean) +
+    s(era_tmean_change) +
+    s(station_elevation) +
+    s(elevation_diff) +
+    s(grid_elevation_sd) +
+    s(yday, bs = "cc") +
+    s(lon, lat, bs = "sos")
+
+  # Fit the dry -> wet model
+  dry_to_wet_fit = bam(
+    formula = formula,
+    family = binomial(),
+    data = data[precip_bool == FALSE],
+    discrete = TRUE,
+    samfrac = .1,
+    control = list(trace = TRUE)
+  )
+
+  # Fit the wet -> wet model
+  data$precip_bool_nochange = !data$precip_bool_change
+  formula = update(formula, precip_bool_nochange ~ .)
+  wet_to_wet_fit = bam(
+    formula = formula,
+    family = binomial(),
+    data = data[precip_bool == TRUE],
+    discrete = TRUE,
+    samfrac = .1,
+    control = list(trace = TRUE)
+  )
+
+  # Remove unneccesary variables that take up a lot of memory
+  dry_to_wet_fit[unneccessary_vars] = NULL
+  wet_to_wet_fit[unneccessary_vars] = NULL
+  gc()
+
   # Save the results
   saveRDS(
-    object = list(intensity = intensity_fit, occurrence = occurrence_fit),
+    object = list(
+      intensity = intensity_fit,
+      dry_to_wet = dry_to_wet_fit,
+      wet_to_wet = wet_to_wet_fit
+    ),
     file = global_fit_path
   )
 
@@ -238,22 +276,29 @@ for (i in seq_along(plot_data)) {
     title_name = factor(
       names(plot_data)[i],
       levels = c(
-        "era_tmean", "era_log_precip", "station_elevation",
+        "era_tmean", "era_tmean_change",
+        "era_log_precip", "era_log_precip_change",
+        "station_elevation",
         "elevation_diff", "yday", "grid_elevation_sd"
       ),
       labels = c(
-        "ERA5 temperature", "ERA5 precipitation", "Station elevation",
+        "ERA5 temperature", "$\\Delta$ ERA5 temperature",
+        "ERA5 precipitation", "$\\Delta$ ERA5 precipitation",
+        "Station elevation",
         "Elevation difference", "Seasonal effect", "ERA5 elevation SD"
       )
     )
     x_name = factor(
       names(plot_data)[i],
       levels = c(
-        "era_tmean", "era_log_precip", "station_elevation",
-        "elevation_diff", "yday", "grid_elevation_sd"
+        "era_tmean", "era_tmean_change",
+        "era_log_precip", "era_log_precip_change",
+        "station_elevation", "elevation_diff", "yday", "grid_elevation_sd"
       ),
       labels = c(
-        "$^\\circ$C", "mm/day", "m.a.s.l.", "m", "Day of the year", "m"
+        "$^\\circ$C", "$^\\circ$C",
+        "mm/day", "mm/day",
+        "m.a.s.l.", "m", "Day of the year", "m"
       )
     )
     plot = plot +
@@ -276,56 +321,39 @@ for (i in seq_along(plot_data)) {
   plots[[model_name]][[names(plot_data)[i]]] = plot
 }
 
-plot_design = "
+plot_designs = c("
 aaccee##
 aacceegg
 bbddffgg
 bbddff##
+",
 "
+aacceegg##
+aacceeggii
+bbddffhhii
+bbddffhh##
+"
+)
 
 for (i in seq_along(plots)) {
+  if (length(plots[[i]]) == 7) {
+    plot_design = plot_designs[1]
+    width = 14
+    height = 6
+  } else {
+    plot_design = plot_designs[2]
+    width = 17
+    height = 6
+  }
   plot = patchwork::wrap_plots(plots[[i]], design = plot_design)
   model_name = names(plots)[i]
   plot_tikz(
     file = file.path(image_dir, paste0("global_precip_", model_name, "_model.pdf")),
     plot = plot,
-    width = 14,
-    height = 6
+    width = width,
+    height = height
   )
 }
-
-plot_design2 = "
-aaaacccceeee####
-aaaacccceeeegggg
-aaaacccceeeegggg
-aaaacccceeeegggg
-bbbbddddffffgggg
-bbbbddddffffgggg
-bbbbddddffffgggg
-bbbbddddffff####
-"
-
-big_plot = local({
-  p1 = patchwork::wrap_plots(plots$intensity, design = plot_design2) +
-    plot_annotation(
-      title = "Intensity",
-      theme = theme(plot.title = element_text(size = 18, face = "bold"))
-    )
-  p2 = patchwork::wrap_plots(plots$occurrence, design = plot_design2) +
-    plot_annotation(
-      title = "Occurrence",
-      theme = theme(plot.title = element_text(size = 18, face = "bold"))
-    )
-  plot = wrap_elements(p1) / wrap_elements(p2)
-  plot
-})
-
-plot_tikz(
-  file = file.path(image_dir, paste0("global_precip_model.pdf")),
-  plot = big_plot,
-  width = 14,
-  height = 9
-)
 
 # ==============================================================================
 # Perform local modelling
@@ -352,7 +380,6 @@ fits = parallel::mclapply(
     data = load_station_data(
       meta = station_meta[i, ],
       data_dir = data_dir,
-      era_stats = TRUE,
       rm_na = FALSE,
       rm_bad_flags = TRUE
     )
@@ -370,119 +397,11 @@ fits = parallel::mclapply(
     ),
     by = "id"]
 
-    # Fit the two local GAMs
+    # Fit the local intensity GAM
     # ------------------------------------------------------------------------------
 
     # Compute offset terms from the global models
-    data$occurrence_offset = fast_mgcv_pred(global_fit$occurrence, data)
     data$intensity_offset = fast_mgcv_pred(global_fit$intensity, data)
-
-    occurrence_formula = precip_bool ~
-      era_precip_bool +
-      offset(occurrence_offset) +
-      s(era_log_precip) +
-      s(era_tmean) +
-      s(yday, bs = "cc")
-
-    occurrence_fit = bam(
-      formula = occurrence_formula,
-      family = binomial(),
-      data = data[!is.na(precip)],
-      discrete = TRUE,
-      control = list(trace = FALSE)
-    )
-
-    tmptmp = fast_mgcv_pred(occurrence_fit, data)
-
-    head(occurrence_fit$linear.predictor)
-    head(occurrence_fit$fitted.values)
-    head(tmptmp)
-
-    if (FALSE) {
-
-      data$precip_bool = as.integer(data$precip_bool)
-
-      library(fmesher)
-      library(inlabru)
-
-      mesh_logprec <- fmesher::fm_mesh_1d(
-        loc = data[!is.na(precip), quantile(era_log_precip, seq(0, 1, by = .05))],
-        boundary = "free",   # or c("free", "free")
-        degree = 2,
-      )
-
-      mesh_tmean <- fmesher::fm_mesh_1d(
-        loc = data[!is.na(precip), quantile(era_tmean, seq(0, 1, by = .05))],
-        boundary = "free",   # or c("free", "free")
-        degree = 2           # 2 = quadratic FE, similar to RW2 smooth
-      )
-
-      spde_logprec <- inla.spde2.pcmatern(
-        mesh = mesh_logprec,
-        alpha = 2,
-        prior.range = c(4, 0.9),
-        prior.sigma = c(2, 0.01)
-      )
-
-      spde_tmean <- inla.spde2.pcmatern(
-        mesh = mesh_tmean,
-        alpha = 2,
-        prior.range = c(1, 0.1),
-        prior.sigma = c(.1, 0.9)
-      )
-
-      cmp <- precip_bool ~
-        Intercept(1) +
-        day_ar(day_count, model = "ar1") +
-        era_precip_bool +
-        logprec(era_log_precip, model = spde_logprec) +
-        tmean(era_tmean, model = spde_tmean) +
-        yday_smooth(yday, model = "rw2", cyclic = TRUE) +
-        offset(occurrence_offset)
-
-      fit2 <- inlabru::bru(
-        cmp,
-        family = "binomial",
-        data = data[!is.na(precip)],
-        formula = precip_bool ~ .,
-        options = list(
-          control.predictor = list(compute = FALSE),
-          control.inla = list(int.strategy = "eb"),
-          verbose = TRUE,
-          num.threads = 1
-        )
-      )
-
-      summary(fit2)
-
-      rho = fit2$summary.hyperpar$mean[2]
-      kappa = fit2$summary.hyperpar$mean[1]
-      tau = kappa / (1 - rho^2)
-      s = tau^-.5
-
-      model = list(ar = rho)
-
-      tmp = arima.sim(
-        model = list(ar = rho),
-        n = nrow(data),
-        sd = s
-      )
-
-      fit2$
-
-      fit2$summary.fitted.values$mean |> summary()
-
-      1 / fit2$summary.hyperpar[1, ]
-      
-    }
-
-
-    
-
-    # Remove unneccesary variables that take up a lot of memory
-    unneccessary_vars = c("wt", "y", "prior.weights", "model", "offset", "weights",
-                          "residuals", "fitted.values", "linear.predictors")
-    occurrence_fit[unneccessary_vars] = NULL
 
     intensity_formula = precip ~
       offset(intensity_offset) +
@@ -545,12 +464,88 @@ fits = parallel::mclapply(
     if (arma_fit$arma[1] > 0) arma_fit$model$ar = head(arma_fit$coef, arma_fit$arma[1])
     if (arma_fit$arma[2] > 0) arma_fit$model$ma = tail(arma_fit$coef, arma_fit$arma[2])
 
+    # Fit the local Markov occurrence models
+    # ------------------------------------------------------------------------------
+
+    data[, let(time_diff = c(as.integer(diff(date)), NA_integer_)), by = "id"]
+    data = data[time_diff == 1]
+
+    data = data[, .(
+      precip_bool_change = (tail(precip_bool, -1) != head(precip_bool, -1)),
+      precip_bool_nochange = (tail(precip_bool, -1) == head(precip_bool, -1)),
+      precip_bool = head(precip_bool, -1),
+      era_precip_bool = head(era_precip_bool, -1),
+      next_era_precip_bool = tail(era_precip_bool, -1),
+      era_log_precip = head(era_log_precip, -1),
+      next_era_log_precip = tail(era_log_precip, -1),
+      era_tmean = head(era_tmean, -1),
+      next_era_tmean = tail(era_tmean, -1),
+      yday = head(yday, -1),
+      lon = lon[1],
+      lat = lat[1],
+      station_elevation = station_elevation[1],
+      grid_elevation_sd = grid_elevation_sd[1],
+      elevation_diff = elevation_diff[1]
+    )]
+
+    data[, let(
+      era_log_precip_change = next_era_log_precip - era_log_precip,
+      era_tmean_change = next_era_tmean - era_tmean
+    )]
+
+    data$wet_to_wet_offset = fast_mgcv_pred(global_fit$wet_to_wet, data)
+    data$dry_to_wet_offset = fast_mgcv_pred(global_fit$dry_to_wet, data)
+
+    dry_to_wet_formula = precip_bool_change ~
+      offset(dry_to_wet_offset) +
+      era_precip_bool +
+      next_era_precip_bool +
+      s(era_log_precip) +
+      s(era_log_precip_change) +
+      s(era_tmean) +
+      s(era_tmean_change) +
+      s(yday, bs = "cc")
+
+    # Fit the dry -> wet model
+    dry_to_wet_fit = bam(
+      formula = dry_to_wet_formula,
+      family = binomial(),
+      data = data[precip_bool == FALSE],
+      discrete = TRUE,
+      control = list(trace = FALSE)
+    )
+
+    wet_to_wet_formula = precip_bool_nochange ~
+      offset(wet_to_wet_offset) +
+      era_precip_bool +
+      next_era_precip_bool +
+      s(era_log_precip) +
+      s(era_log_precip_change) +
+      s(era_tmean) +
+      s(era_tmean_change) +
+      s(yday, bs = "cc")
+
+    # Fit the wet -> wet model
+    wet_to_wet_fit = bam(
+      formula = dry_to_wet_formula,
+      family = binomial(),
+      data = data[precip_bool == TRUE],
+      discrete = TRUE,
+      control = list(trace = FALSE)
+    )
+
+    # Remove unneccesary variables that take up a lot of memory
+    dry_to_wet_fit[unneccessary_vars] = NULL
+    wet_to_wet_fit[unneccessary_vars] = NULL
+
     # Save the local model fits
+    # ------------------------------------------------------------------------------
     res = data.table(
       id = station_meta$id[i],
       intensity = list(intensity_fit),
-      occurrence = list(occurrence_fit),
-      intensity_arma = list(arma_fit)
+      intensity_arma = list(arma_fit),
+      dry_to_wet = list(dry_to_wet_fit),
+      wet_to_wet = list(wet_to_wet_fit)
     )
     saveRDS(res, out_path)
 
@@ -728,7 +723,6 @@ for (K in K_vals) {
       data = load_station_data(
         meta = station_meta[i, ],
         data_dir = data_dir,
-        era_stats = TRUE,
         rm_bad_flags = TRUE
       )
       data[, let(
@@ -1330,7 +1324,6 @@ precip_data = load_station_data(
   meta = station_meta,
   data_dir = data_dir,
   verbose = TRUE,
-  era_stats = TRUE,
   rm_bad_flags = TRUE
 )
 precip_data = precip_data[, .(
@@ -1570,7 +1563,6 @@ time_series_data = lapply(
     data = load_station_data(
       meta = station_meta[i, ],
       data_dir = data_dir,
-      era_stats = TRUE,
       rm_bad_flags = TRUE
     )
     data[, let(
