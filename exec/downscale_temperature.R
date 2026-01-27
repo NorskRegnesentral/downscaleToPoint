@@ -356,67 +356,6 @@ fits = parallel::mclapply(
 # Evaluation
 # ==============================================================================
 
-# Define functions for simulating temperature from the downscaling models
-# ------------------------------------------------------------------------------
-
-simulate_tmean = function(n, marginal_fit, arma_fit, data, offset = 0) {
-  # Compute the linear predictor
-  linpred = fast_mgcv_pred(marginal_fit, data) + offset
-  # Simulate Gaussian ARMA time series
-  n_time = max(data$day_count) - min(data$day_count) + 1
-  arma_sims = sapply(
-    X = seq_len(n),
-    FUN = function(i) {
-      as.vector(arima.sim(n = n_time, model = arma_fit$model, sd = sqrt(arma_fit$sigma2)))
-    })
-  # Remove all ARMA simulations from dates where we have no observations, to ensure
-  # that the observed and the simulated data correspond to each other
-  arma_sims = arma_sims[data$day_count - min(data$day_count) + 1, , drop = FALSE]
-  # Transform the ARMA simulations to have the same marginal distribution as the local fit
-  res = arma_sims * marginal_fit$sig2 + linpred
-  # Return the simulated data in a matrix with `n` columns
-  matrix(res, nrow = nrow(arma_sims), ncol = n)
-}
-
-simulate_tmean_notime = function(n, fit, data, offset = 0) {
-  # Compute the linear predictor
-  linpred = fast_mgcv_pred(fit, data) + offset
-  # Simulate the corresponding temperature means
-  res = rnorm(n * length(linpred), mean = linpred, sd = fit$sig2)
-  # Return the simulated data in a matrix with `n` columns
-  matrix(res, nrow = length(linpred), ncol = n)
-}
-
-simulate_tmean_with_donors = function(n_sims,
-                                      data,
-                                      local_fits,
-                                      offset,
-                                      use_arma = TRUE) {
-  K = nrow(local_fits)
-  n_sims_per_local_fit = ceiling(n_sims / K)
-  simulations = lapply(
-    X = seq_len(K),
-    FUN = function(i) {
-      if (use_arma) {
-        simulate_tmean(
-          n = n_sims_per_local_fit,
-          marginal_fit = local_fits$marginal_fit[[i]],
-          arma_fit = local_fits$arma_fit[[i]],
-          data = data,
-          offset = offset
-        )
-      } else {
-         simulate_tmean_notime(
-          n = n_sims_per_local_fit,
-          fit = local_fits$marginal_fit[[i]],
-          data = data,
-          offset = offset
-        )
-      }
-    })
-  do.call(cbind, simulations)
-}
-
 # Simulate downscaled temperature at all locations, and compare properties of
 # simulations from different models with each other and with ERA
 # ------------------------------------------------------------------------------
@@ -492,7 +431,7 @@ for (K in K_vals) {
         data = data,
         local_fits = local_fits,
         offset = data$tmean_offset,
-        use_arma = FALSE
+        time_dep = FALSE
       )
 
       # Check if any of the donor stations appear to be outliers and
@@ -507,7 +446,7 @@ for (K in K_vals) {
           data = data,
           local_fits = local_fits[-bad_local_donors, ],
           offset = data$tmean_offset,
-          use_arma = FALSE
+          time_dep = FALSE
         )
       }
 
@@ -539,7 +478,7 @@ for (K in K_vals) {
         data = data,
         local_fits = local_fits,
         offset = data$tmean_offset,
-        use_arma = TRUE
+        time_dep = TRUE
       )
 
       # Check if any of the donor stations appear to be outliers and
@@ -554,7 +493,7 @@ for (K in K_vals) {
           data = data,
           local_fits = local_fits[-bad_full_donors, ],
           offset = data$tmean_offset,
-          use_arma = TRUE
+          time_dep = TRUE
         )
       }
 
@@ -1296,7 +1235,7 @@ time_series_data = lapply(
       data = data,
       local_fits = local_fits,
       offset = data$tmean_offset,
-      use_arma = TRUE
+      time_dep = TRUE
     )
 
     # Check if any of the donor stations appear to be outliers and
@@ -1311,7 +1250,7 @@ time_series_data = lapply(
         data = data,
         local_fits = local_fits[-bad_full_donors, ],
         offset = data$tmean_offset,
-        use_arma = TRUE
+        time_dep = TRUE
       )
     }
 
