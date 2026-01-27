@@ -1,3 +1,5 @@
+
+#' @export
 simulate_tmean_with_donors = function(n_sims,
                                       data,
                                       local_fits,
@@ -28,6 +30,7 @@ simulate_tmean_with_donors = function(n_sims,
   do.call(cbind, simulations)
 }
 
+#' @export
 simulate_precip_with_donors = function(n_sims,
                                        data,
                                        local_fits,
