@@ -7,7 +7,6 @@ library(geosphere)
 library(sf)
 library(rnaturalearth)
 library(scico)
-library(MASS)
 library(parallel)
 library(purrr)
 library(patchwork)
@@ -246,8 +245,6 @@ plot_tikz(
 
 global_fit = readRDS(global_fit_path)
 
-overwrite = FALSE
-
 # Loop over all weather stations and fit local GAM/ARMA models
 start_time = Sys.time()
 fits = parallel::mclapply(
@@ -259,7 +256,7 @@ fits = parallel::mclapply(
     out_path = file.path(local_fits_dir, paste0(station_meta$id[i], ".rds"))
 
     # Check if the fits have already been created
-    if (!overwrite && file.exists(out_path)) return()
+    if (!overwrite_local_models && file.exists(out_path)) return()
 
     # Load data from the station of interest
     data = load_station_data(
@@ -364,7 +361,6 @@ global_fit = readRDS(global_fit_path)
 
 # Loop over all weather stations for all values of K, simulate data and
 # compute all scoring functions of interest. This takes a lot of time
-overwrite = FALSE
 start_time = Sys.time()
 for (K in K_vals) {
   out_dir = file.path(cv_dir, paste0(K, "_neighbours"))
@@ -385,7 +381,7 @@ for (K in K_vals) {
       )
 
       out_path = file.path(out_dir, paste0(station_meta$id[i], ".rds"))
-      if (!overwrite && file.exists(out_path)) return(TRUE)
+      if (!overwrite_evaluation && file.exists(out_path)) return(TRUE)
 
       # Compute distances to all other weather stations
       dists = geosphere::distHaversine(
@@ -395,15 +391,15 @@ for (K in K_vals) {
 
       # Locate and load the local models from the K nearest weather stations
       # to weather station nr. i
-      nearest_index = order(dists)[-1][seq_len(K)]
-      local_fits = lapply(
-        X = seq_along(nearest_index),
-        FUN = function(j) {
-          path = file.path(local_fits_dir, paste0(station_meta$id[nearest_index[j]], ".rds"))
-          fit = readRDS(path)
-          fit$dist = dists[nearest_index[j]]
-          fit
-        })
+      local_fits = list()
+      for (index in order(dists)[-1]) {
+        path = file.path(local_fits_dir, paste0(station_meta$id[index], ".rds"))
+        if (!file.exists(path)) next
+        fit = readRDS(path)
+        fit$dist = dists[index]
+        local_fits[[length(local_fits) + 1]] = fit
+        if (length(local_fits) == K) break
+      }
       local_fits = rbindlist(local_fits)
 
       # Load the data for the current weather station, and add necessary covariates
@@ -1196,15 +1192,15 @@ time_series_data = lapply(
     )
 
     # Locate and load the local models from the K nearest weather stations to weather station nr. i
-    nearest_index = order(dists)[-1][seq_len(chosen_K)]
-    local_fits = lapply(
-      X = seq_along(nearest_index),
-      FUN = function(j) {
-        path = file.path(local_fits_dir, paste0(station_meta$id[nearest_index[j]], ".rds"))
-        fit = readRDS(path)
-        fit$dist = dists[nearest_index[j]]
-        fit
-      })
+    local_fits = list()
+    for (index in order(dists)[-1]) {
+      path = file.path(local_fits_dir, paste0(station_meta$id[index], ".rds"))
+      if (!file.exists(path)) next
+      fit = readRDS(path)
+      fit$dist = dists[index]
+      local_fits[[length(local_fits) + 1]] = fit
+      if (length(local_fits) == chosen_K) break
+    }
     local_fits = rbindlist(local_fits)
 
     # Load the data for the current weather station, and add necessary covariates

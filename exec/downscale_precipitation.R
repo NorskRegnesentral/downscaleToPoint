@@ -1555,6 +1555,7 @@ time_series_data = lapply(
       p2 = station_meta[, cbind(lon, lat)]
     )
 
+    # Locate and load the local models from the K nearest weather stations to weather station nr. i
     local_fits = list()
     for (index in order(dists)[-1]) {
       path = file.path(local_fits_dir, paste0(station_meta$id[index], ".rds"))
