@@ -14,12 +14,6 @@ library(downscaleToPoint)
 library(patchwork)
 library(dplyr)
 
-"And I should look into Schaake Shuffling!"
-
-"
-We could maybe use the Schaake Shuffle from neighbouring stations to improve the matching of the temperature/precipitation ensemble members! But we use quite few simulations per station, and that might cause problems. But it is worth writing about in the discussion!
-"
-
 # Define all necessary paths
 # ------------------------------------------------------------------------------
 data_dir = "/nr/samba/user/smvandeskog/projects/downscaleToPoint/data/"
