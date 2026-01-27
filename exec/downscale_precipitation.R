@@ -45,9 +45,15 @@ n_sims = 150 # Number of ensembles to simulate during the downscaling
 diff_lengths = c(1, 3, 7) # Which n-day-differences to evaluate in the cross-validation
 zero_thresholds = c(0, .1, .5, 1) # Different precipitation thresholds for defining a day as dry
 
+# Random seeds for reproducibility
 set.seed(20260126)
 base_seed = sample.int(1e8, 1)
 seed_jump = sample.int(1e4, 1)
+
+# Should we overwrite already existing results?
+overwrite_local_models = FALSE
+overwrite_evaluation = FALSE
+overwrite_global_model = FALSE
 
 # Thresholds for computing threshold weighted IQD scores during the cross-validation
 threshold_probs = c(.8, .9, .95, .99, .995, .999)
@@ -90,7 +96,7 @@ station_meta = station_meta[n_unique_precip > 40]
 # ==============================================================================
 
 # Only fit the global model if we have not already done so
-if (!file.exists(global_fit_path)) {
+if (overwrite_global_model || !file.exists(global_fit_path)) {
 
   # Load all data from all available weather stations
   data = load_station_data(
@@ -383,8 +389,6 @@ for (i in seq_along(plots)) {
 
 global_fit = readRDS(global_fit_path)
 
-overwrite = FALSE
-
 # Loop over all weather stations and fit local GAM/ARMA models
 start_time = Sys.time()
 fits = parallel::mclapply(
@@ -396,7 +400,7 @@ fits = parallel::mclapply(
     out_path = file.path(local_fits_dir, paste0(station_meta$id[i], ".rds"))
 
     # Check if the fits have already been created
-    if (!overwrite && file.exists(out_path)) return()
+    if (!overwrite_local_models && file.exists(out_path)) return()
 
     # Load data from the station of interest
     data = load_station_data(
@@ -635,7 +639,6 @@ quantile(apply(arma_models, 1, sum), seq(0, 1, by = .05)) # p + q
 # Define functions for simulating precipitation from the downscaling models
 # ------------------------------------------------------------------------------
 
-
 simulate_occurrence_notime = function(n, fit, data, offset = 0) {
   # Compute the linear predictor
   linpred = fast_mgcv_pred(fit, data) + offset
@@ -782,7 +785,6 @@ global_fit = readRDS(global_fit_path)
 
 # Loop over all weather stations for all values of K, simulate data and
 # compute all scoring functions of interest. This takes a lot of time
-overwrite = FALSE
 start_time = Sys.time()
 for (K in K_vals) {
   out_dir = file.path(cv_dir, paste0(K, "_neighbours"))
@@ -803,7 +805,7 @@ for (K in K_vals) {
       )
 
       out_path = file.path(out_dir, paste0(station_meta$id[i], ".rds"))
-      if (!overwrite && file.exists(out_path)) return(TRUE)
+      if (!overwrite_evaluation && file.exists(out_path)) return(TRUE)
 
       # Compute distances to all other weather stations
       dists = geosphere::distHaversine(
@@ -813,15 +815,15 @@ for (K in K_vals) {
 
       # Locate and load the local models from the K nearest
       # weather stations to weather station nr. i
-      nearest_index = order(dists)[-1][seq_len(K)]
-      local_fits = lapply(
-        X = seq_along(nearest_index),
-        FUN = function(j) {
-          path = file.path(local_fits_dir, paste0(station_meta$id[nearest_index[j]], ".rds"))
-          fit = readRDS(path)
-          fit$dist = dists[nearest_index[j]]
-          fit
-        })
+      local_fits = list()
+      for (index in order(dists)[-1]) {
+        path = file.path(local_fits_dir, paste0(station_meta$id[index], ".rds"))
+        if (!file.exists(path)) next
+        fit = readRDS(path)
+        fit$dist = dists[index]
+        local_fits[[length(local_fits) + 1]] = fit
+        if (length(local_fits) == K) break
+      }
       local_fits = rbindlist(local_fits)
 
       # Load the data for the current weather station, and add necessary covariates
@@ -913,7 +915,6 @@ for (K in K_vals) {
         )
       }
 
-
       # Simulate precipitation data using the full model,
       # which has time dependence for both intensity and occurrence
       sims$full = simulate_precip_with_donors(
@@ -969,6 +970,8 @@ for (K in K_vals) {
 
       # Start evaluating the different model simulations
       # ------------------------------------------------
+
+      # First, remove NAs
       for (j in seq_along(sims)) sims[[j]] = sims[[j]][!is.na(data$precip), ]
       data = data[!is.na(precip)]
 
@@ -1098,8 +1101,9 @@ for (K in K_vals) {
           )
         })
       res$diff_iqd = list(cbind(era = era_diff_iqd, sims_diff_iqd))
- 
-      # Compare marginal distributions for the weekly means and standard deviations of precipitation data
+
+      # Compare marginal distributions for the weekly means and
+      # standard deviations of precipitation data
       # from observations, ERA5 and simulated precipitation.
       #
       # week_indices is a data.table, describing which rows of `data` that contain data from which
@@ -1148,7 +1152,8 @@ for (K in K_vals) {
         function(x) iqd(as.vector(x), x = weekly_data$sd$obs))
       res$weekly_sd_iqd = list(c(era = weekly_sd_era_iqd, weekly_sd_sim_iqd))
 
-      # Compare marginal distributions for the monthly means and standard deviations of precipitation data
+      # Compare marginal distributions for the monthly means and
+      # standard deviations of precipitation data
       # from observations, ERA5 and simulated precipitation.
       #
       # month_indices is a data.table, describing which rows of `data` that contain data from which
@@ -1207,7 +1212,7 @@ for (K in K_vals) {
 }
 
 # Load all eval data from the cross-validation experiment
-eval_files = list.files(cv_dir, full.names = TRUE)
+eval_files = list.files(cv_dir, full.names = TRUE, recursive = TRUE)
 eval = vector("list", length(eval_files))
 pb = progress_bar(length(eval_files))
 for (i in seq_along(eval_files)) {
@@ -1693,16 +1698,15 @@ time_series_data = lapply(
       p2 = station_meta[, cbind(lon, lat)]
     )
 
-    # Locate and load the local models from the K nearest weather stations to weather station nr. i
-    nearest_index = order(dists)[-1][seq_len(chosen_K)]
-    local_fits = lapply(
-      X = seq_along(nearest_index),
-      FUN = function(j) {
-        path = file.path(local_fits_dir, paste0(station_meta$id[nearest_index[j]], ".rds"))
-        fit = readRDS(path)
-        fit$dist = dists[nearest_index[j]]
-        fit
-      })
+    local_fits = list()
+    for (index in order(dists)[-1]) {
+      path = file.path(local_fits_dir, paste0(station_meta$id[index], ".rds"))
+      if (!file.exists(path)) next
+      fit = readRDS(path)
+      fit$dist = dists[index]
+      local_fits[[length(local_fits) + 1]] = fit
+      if (length(local_fits) == chosen_K) break
+    }
     local_fits = rbindlist(local_fits)
 
     # Load the data for the current weather station, and add necessary covariates

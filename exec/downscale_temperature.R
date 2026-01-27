@@ -40,9 +40,17 @@ B = 1000 # Number of bootstraps to use when bootstrapping
 # K_vals is the vector of all values of K we will test during the cross-validation experiment
 K_vals = c(5, 10, 15, 20, 25, 30)
 
+# Random seeds for reproducibility
+set.seed(20260127)
+base_seed = sample.int(1e8, 1)
+seed_jump = sample.int(1e4, 1)
+
+# Should we overwrite already existing results?
+overwrite_local_models = FALSE
+overwrite_evaluation = FALSE
+overwrite_global_model = FALSE
+
 # Thresholds for computing threshold weighted IQD scores during the cross-validation
-#upper_threshold_probs = c(.8, .9, .95, .99)
-#lower_threshold_probs = c(.2, .1, .05, .01)
 threshold_probs = c(.001, .005, .01, .05, .1, .2, .5, .8, .9, .95, .99, .995, .999)
 
 # This is a data.frame containing information about all the different scoring functions
@@ -76,7 +84,7 @@ station_meta = station_meta[n_tmean > 200]
 # ==============================================================================
 
 # Only fit the global model if we have not already done so
-if (!file.exists(global_fit_path)) {
+if (overwrite_global_model || !file.exists(global_fit_path)) {
 
   # Load all data from all available weather stations
   data = load_station_data(
@@ -428,6 +436,8 @@ for (K in K_vals) {
     mc.preschedule = FALSE,
     FUN = function(i) {
 
+      set.seed(base_seed + K + i * seed_jump)
+
       # Print our progress so far
       time_passed = Sys.time() - start_time
       message(
@@ -477,7 +487,6 @@ for (K in K_vals) {
       sims = list()
 
       # Simulate temperature data using the local GAMs, but not the local ARMA models
-      set.seed(1)
       sims$local = simulate_tmean_with_donors(
         n_sims = n_sims,
         data = data,
@@ -493,7 +502,6 @@ for (K in K_vals) {
         get_bad_donor_index(sims$local, sd, K)
       ))
       if (length(bad_local_donors) > 0) {
-        set.seed(1)
         sims$local = simulate_tmean_with_donors(
           n_sims = n_sims,
           data = data,
@@ -526,7 +534,6 @@ for (K in K_vals) {
       )
 
       # Simulate temperature data using the full model, including both local GAMs and ARMA models
-      set.seed(1)
       sims$full = simulate_tmean_with_donors(
         n_sims = n_sims,
         data = data,
@@ -542,7 +549,6 @@ for (K in K_vals) {
         get_bad_donor_index(sims$full, sd, K)
       ))
       if (length(bad_full_donors) > 0) {
-        set.seed(1)
         sims$full = simulate_tmean_with_donors(
           n_sims = n_sims,
           data = data,
@@ -553,7 +559,6 @@ for (K in K_vals) {
       }
 
       # Simulate temperature means using the global model
-      set.seed(1)
       sims$global = simulate_tmean_notime(
         n = n_sims,
         fit = global_fit,
@@ -793,7 +798,6 @@ chosen_Ks = c(5, 10, 15, 20, 25, 30)
 data_types = c("full")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
-set.seed(1)
 bootstrap_data = list()
 for (i in seq_len(nrow(score_info))) {
   bootstrap_data[[i]] = bootstrap_skillscores(
@@ -857,7 +861,6 @@ chosen_K = 10
 data_types = c("era", "local_deterministic", "full", "global_deterministic")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
-set.seed(1)
 bootstrap_data = list()
 for (i in seq_len(nrow(score_info))) {
   bootstrap_data[[i]] = bootstrap_skillscores(
@@ -1288,7 +1291,6 @@ time_series_data = lapply(
     data$tmean_offset = data$era_tmean + fast_mgcv_pred(global_fit, data)
 
     # Simulate temperature data using the full model, including both local GAMs and ARMA models
-    set.seed(1)
     sims = simulate_tmean_with_donors(
       n_sims = n_sims,
       data = data,
@@ -1304,7 +1306,6 @@ time_series_data = lapply(
       get_bad_donor_index(sims, sd, chosen_K)
     ))
     if (length(bad_full_donors) > 0) {
-      set.seed(1)
       sims = simulate_tmean_with_donors(
         n_sims = n_sims,
         data = data,
