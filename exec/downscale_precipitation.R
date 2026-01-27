@@ -574,7 +574,7 @@ fits = parallel::mclapply(
 
     # Fit the wet -> wet model
     wet_to_wet_fit = bam(
-      formula = dry_to_wet_formula,
+      formula = wet_to_wet_formula,
       family = binomial(),
       data = data[precip_bool == TRUE],
       discrete = TRUE,
