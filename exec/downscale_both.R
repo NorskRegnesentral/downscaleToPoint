@@ -192,3 +192,34 @@ parallel::mclapply(
     saveRDS(out, out_path)
   })
 
+
+
+
+
+# ==============================================================================
+# Compute correlations between simulated and observed data
+# ==============================================================================
+
+corr_data = parallel::mclapply(
+  X = seq_len(nrow(station_meta)),
+  mc.cores = n_cores,
+  mc.preschedule = FALSE,
+  FUN = function(i) {
+
+    if (i %% 100 == 0) message(i, " / ", nrow(station_meta))
+
+    path = file.path(out_dir, paste0(station_meta$id[i], ".rds"))
+    if (!file.exists(path)) {
+      message("File ", path, " does not seem to exist")
+      return(NULL)
+    }
+
+    data = readRDS(path)
+
+    correlations = data[, cor(precip, tmean), by = "tag"]
+    correlations$id = station_meta$id[i]
+ 
+    correlations
+  })
+corr_data = rbindlist(corr_data)
+
