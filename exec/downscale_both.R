@@ -216,10 +216,14 @@ corr_data = parallel::mclapply(
 
     data = readRDS(path)
 
-    correlations = data[, cor(precip, tmean), by = "tag"]
+    correlations = data[, .(corr = cor(precip, tmean)), by = "tag"]
     correlations$id = station_meta$id[i]
- 
+
     correlations
   })
 corr_data = rbindlist(corr_data)
+corr_data = dcast(corr_data, id ~ tag, value.var = "corr")
 
+summary(corr_data$obs)
+summary(corr_data$sim)
+cor(corr_data$obs, corr_data$sim)
