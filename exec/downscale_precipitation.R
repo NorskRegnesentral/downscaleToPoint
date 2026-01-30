@@ -1101,7 +1101,7 @@ for (i in seq_len(nrow(score_info))) {
 bootstrap_data = rbindlist(bootstrap_data)
 
 # Plot all of the different skill scores, with 95% confidence intervals
-plot = bootstrap_data[K1 > K0][K0 <= 20][K0 > 10][, let(
+plot = bootstrap_data[K1 > K0][K0 <= 15][K0 >= 10][, let(
     data_type = factor(data_type, levels = c("full"), labels = c("Full")),
     K1 = factor(K1, levels = chosen_Ks, labels = paste0("$K = ", chosen_Ks, "$")),
     K0 = factor(K0, levels = chosen_Ks, labels = paste0("$S_0: K = ", chosen_Ks, "$")),
@@ -1141,8 +1141,7 @@ plot_tikz(
 # Find the best downscaling model for the best value of K
 # ------------------------------------------------------------------------------
 
-#chosen_K = 25
-chosen_K = 20
+chosen_K = 15
 data_types = c("era", "local", "full", "global")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
@@ -1287,7 +1286,6 @@ plot = ggplot() +
 
 plot_tikz(
   file = file.path(image_dir, "precip_map_scores.pdf"),
-  #file = "Rplots.pdf",
   tex_engine = "lualatex",
   plot = plot,
   width = 11,
@@ -1342,32 +1340,6 @@ plot_data[, let(
   precip_diff = precip - era_precip,
   elev_diff = elev - elev_mean
 )]
-
-if (FALSE) {
-
-  plots = list()
-  plots[[1]] = ggplot(plot_data) +
-    geom_point(aes(x = precip, y = value), alpha = .4) +
-    facet_grid(variable ~ tag)
-  plots[[2]] = ggplot(plot_data) +
-    geom_point(aes(x = precip_diff, y = value), alpha = .4) +
-    facet_grid(variable ~ tag)
-  plots[[3]] = ggplot(plot_data) +
-    geom_point(aes(x = elev_diff, y = value), alpha = .4) +
-    facet_grid(variable ~ tag)
-  plots[[4]] = ggplot(plot_data) +
-    geom_point(aes(x = abs(elev_diff), y = value), alpha = .4) +
-    facet_grid(variable ~ tag)
-  plots[[5]] = ggplot(plot_data) +
-    geom_point(aes(x = elev_sd, y = value), alpha = .4) +
-    facet_grid(variable ~ tag)
-
-  pdf("Rplots.pdf")
-  for (plot in plots) print(plot)
-  dev.off()
-
-}
-
 
 plot_data = st_as_sf(
   plot_data,
