@@ -90,8 +90,10 @@ if (overwrite_global_model || !file.exists(global_fit_path)) {
     meta = station_meta,
     data_dir = data_dir,
     verbose = TRUE,
-    era_stats = TRUE
+    era_stats = TRUE,
+    rm_na = FALSE
   )
+  data = data[!is.na(tmean)]
 
   # Add extra variables for the modelling
   data[, let(
@@ -405,8 +407,10 @@ for (K in K_vals) {
       # Load the data for the current weather station, and add necessary covariates
       data = load_station_data(
         meta = station_meta[i, ],
-        data_dir = data_dir
+        data_dir = data_dir,
+        rm_na = FALSE
       )
+      data = data[!is.na(tmean)]
       data[, let(
         yday = yday(date),
         year = year(date),
@@ -976,8 +980,10 @@ tmean_data = load_station_data(
   meta = station_meta,
   data_dir = data_dir,
   verbose = TRUE,
-  era_stats = TRUE
+  era_stats = TRUE,
+  rm_na = FALSE
 )
+tmean_data = tmean_data[!is.na(tmean)]
 tmean_data = tmean_data[, .(
   tmean = mean(tmean),
   era_tmean = mean(era_tmean)
@@ -1206,8 +1212,10 @@ time_series_data = lapply(
     # Load the data for the current weather station, and add necessary covariates
     data = load_station_data(
       meta = station_meta[i, ],
-      data_dir = data_dir
+      data_dir = data_dir,
+      rm_na = FALSE
     )
+    data = data[!is.na(tmean)]
     data[, let(
       yday = yday(date),
       year = year(date),

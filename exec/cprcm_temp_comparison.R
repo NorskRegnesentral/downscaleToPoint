@@ -180,8 +180,10 @@ success = parallel::mclapply(
     # Load the data for the current weather station, and add necessary covariates
     data = load_station_data(
       meta = meta[i, ],
-      data_dir = data_dir
+      data_dir = data_dir,
+      rm_na = FALSE
     )
+    data = data[!is.na(tmean)]
     data[, let(
       yday = yday(date),
       year = year(date),

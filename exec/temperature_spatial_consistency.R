@@ -33,6 +33,7 @@ n_sims = 150 # Number of ensembles to simulate during the downscaling
 
 K = 10
 
+neighbour_radius = 100e3
 n_neighbour_min = 8
 
 overwrite = FALSE
@@ -83,15 +84,17 @@ parallel::mclapply(
       p2 = station_meta[, cbind(lon, lat)]
     )
 
-    # Locate all stations within a distance of 100 km
-    neighbouring_ids = station_meta$id[dists <= 100e3]
+    # Locate all stations that are closer than neighbour_radius
+    neighbouring_ids = station_meta$id[dists <= neighbour_radius]
     n_neighbouring_ids = length(neighbouring_ids)
 
     # Load data for all these stations
     obs = load_station_data(
       meta = station_meta[id %in% neighbouring_ids],
-      data_dir = data_dir
+      data_dir = data_dir,
+      rm_na = FALSE
     )
+    obs = obs[!is.na(tmean)]
 
     # Only keep data from dates where at least `n_neighbour_min` of the stations
     # actually have any data
