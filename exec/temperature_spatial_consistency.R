@@ -38,7 +38,7 @@ n_neighbour_min = 8
 overwrite = FALSE
 
 # Thresholds for computing threshold weighted IQD scores during the cross-validation
-threshold_probs = c(.9, .95, .99)
+threshold_probs = c(.01, .05, .1, .9, .95, .99)
 
 # Random seeds for reproducibility
 set.seed(20260129)
