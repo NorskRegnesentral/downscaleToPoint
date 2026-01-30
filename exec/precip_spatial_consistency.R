@@ -16,10 +16,10 @@ library(downscaleToPoint)
 # Define all necessary paths
 # ------------------------------------------------------------------------------
 data_dir = "/nr/samba/user/smvandeskog/projects/downscaleToPoint/data/"
-model_dir = file.path(data_dir, "models", "temperature")
-image_dir = file.path(data_dir, "images", "temperature")
+model_dir = file.path(data_dir, "models", "precipitation")
+image_dir = file.path(data_dir, "images", "precipitation")
 local_fits_dir = file.path(model_dir, "local_fits")
-out_dir = file.path(data_dir, "spatial_consistency", "temperature")
+out_dir = file.path(data_dir, "spatial_consistency", "precipitation")
 
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
@@ -30,11 +30,13 @@ global_fit_path = file.path(model_dir, "global.rds")
 # ------------------------------------------------------------------------------
 n_cores = 8 # Number of cores to use for running code in parallel
 n_sims = 150 # Number of ensembles to simulate during the downscaling
+diff_lengths = c(1, 3, 7) # Which n-day-differences to evaluate in the cross-validation
+B = 1000 # Number of bootstraps to use when bootstrapping
 
-K = 10
+K = 15
 
-neighbour_radius = 100e3
 n_neighbour_min = 8
+neighbour_radius = 100e3
 
 overwrite = FALSE
 
@@ -42,7 +44,7 @@ overwrite = FALSE
 threshold_probs = c(.01, .05, .1, .9, .95, .99)
 
 # Random seeds for reproducibility
-set.seed(20260129)
+set.seed(20260130)
 base_seed = sample.int(1e8, 1)
 seed_jump = sample.int(1e4, 1)
 
@@ -50,8 +52,9 @@ seed_jump = sample.int(1e4, 1)
 # ------------------------------------------------------------------------------
 station_meta = readRDS(meta_path)
 
-# Remove stations with few temperature observations
-station_meta = station_meta[n_tmean > 200]
+# Remove stations with few precipitation observations
+station_meta = station_meta[n_good_precip_flag > 200]
+station_meta = station_meta[n_unique_precip > 40]
 
 # ==============================================================================
 # Evaluation
@@ -94,35 +97,37 @@ parallel::mclapply(
       data_dir = data_dir,
       rm_na = FALSE
     )
-    obs = obs[!is.na(tmean)]
-
-    # Only keep data from dates where at least `n_neighbour_min` of the stations
-    # actually have any data
-    obs[, let(n_obs_per_date = .N), by = c("date")]
-    obs = obs[n_obs_per_date >= n_neighbour_min]
-    if (nrow(obs) == 0) return(FALSE)
-
-    obs_ids = unique(obs$id)
-    obs_dates = sort(unique(obs$date))
-
-    # Fill in extra rows with NAs, so obs has the same number of rows/dates for all ids
-    obs = merge(
-      obs,
-      data.table(
-        id = rep(obs_ids, each = length(obs_dates)),
-        date = rep(obs_dates, length(obs_ids))
-      ),
-      all = TRUE
-    )
 
     # Add the necessary covariates for performing downscaling
     obs[, let(
       yday = yday(date),
       year = year(date),
+      month = month(date),
       station_elevation = log(station_elevation + 1),
-      era_log_precip = log(era_precip + 1)
+      era_log_precip = log(era_precip + 1),
+      era_precip_bool = era_precip > 0,
+      precip_bool = precip > 0,
+      day_count = as.integer(date) - as.integer(min(date)) + 1L
     )]
-    obs[, let(day_count = as.integer(date) - as.integer(min(date)) + 1L)]
+    obs[, let(
+      next_era_precip_bool = c(tail(era_precip_bool, -1), NA),
+      next_era_log_precip = c(tail(era_log_precip, -1), NA),
+      next_era_tmean = c(tail(era_tmean, -1), NA)
+    ), by = "id"]
+    obs[, let(
+      era_log_precip_change = next_era_log_precip - era_log_precip,
+      era_tmean_change = next_era_tmean - era_tmean
+    )]
+
+    # Only keep data from dates where at least `n_neighbour_min` of the stations
+    # actually have any data
+    obs[, let(n_obs_per_date = sum(!is.na(precip))), by = c("date")]
+    if (obs[n_obs_per_date >= n_neighbour_min, .N] == 0) return(FALSE)
+    date_range = obs[n_obs_per_date >= n_neighbour_min, range(date)]
+    obs = obs[date >= min(date_range)][date <= max(date_range)]
+
+    obs_ids = unique(obs$id)
+    obs_dates = sort(unique(obs$date))
 
     # Simulate temperature at all of the neighbouring IDs
     sims = list()
@@ -145,40 +150,77 @@ parallel::mclapply(
       }
       local_fits = rbindlist(local_fits)
 
-      # Compute the offset from the global GAM
-      tmean_offset = obs[
-        id == obs_ids[j],
-        era_tmean + fast_mgcv_pred(global_fit, .SD)
-      ]
+      local_obs = obs[id == obs_ids[j]][order(date)]
 
-      sim = simulate_tmean_with_donors(
+      # Compute offsets from the global GAMs
+      offsets = list()
+      for (name in names(global_fit)) {
+        if (grepl("wet", name)) {
+          offsets[[name]] = fast_mgcv_pred(global_fit[[name]], local_obs[-nrow(local_obs)])
+        } else {
+          offsets[[name]] = fast_mgcv_pred(global_fit[[name]], local_obs)
+        }
+      }
+
+      sim = simulate_precip_with_donors(
         n_sims = n_sims,
-        data = obs[id == obs_ids[j]],
+        data = local_obs,
         local_fits = local_fits,
-        offset = tmean_offset,
-        time_dep = TRUE
+        offsets = offsets,
+        intensity_time_dep = TRUE,
+        occurrence_time_dep = TRUE
       )
 
       # Check if any of the donor stations appear to be outliers and
       # Remove them if this is the case
-      na_rows = apply(sim, 1, function(x) any(is.na(x)))
-      bad_donors = unique(c(
-        get_bad_donor_index(sim[!na_rows, , drop = FALSE], mean, K),
-        get_bad_donor_index(sim[!na_rows, , drop = FALSE], sd, K)
-      ))
+      bad_donors = get_bad_donor_index(sim, mean, K)
       if (length(bad_donors) > 0) {
-        sim = simulate_tmean_with_donors(
+        sim = simulate_precip_with_donors(
           n_sims = n_sims,
-          data = obs[id == obs_ids[j]],
+          data = local_obs,
           local_fits = local_fits[-bad_donors, ],
-          offset = tmean_offset,
-          time_dep = TRUE
+          offsets = offsets,
+          intensity_time_dep = TRUE,
+          occurrence_time_dep = TRUE
         )
       }
 
-      sims[[obs_ids[j]]] = sim[, seq_len(n_sims)]
+      # Change sim to NA for all dates where local_obs$precip was NA
+      sim[is.na(local_obs$precip), ] = NA
+
+      # Pad the output with NAs, so that all simulations from all stations have the
+      # same number of rows
+      sims[[obs_ids[j]]] = matrix(nrow = length(obs_dates), ncol = n_sims)
+      sims[[obs_ids[j]]][obs_dates %in% local_obs$date, ] = sim[, seq_len(n_sims)]
     }
     sims = do.call(abind::abind, list(sims, along = 3))
+
+    obs_stats = suppressWarnings({
+      obs[, .(
+        mean = mean(precip, na.rm = TRUE),
+        median = median(precip, na.rm = TRUE),
+        sd = sd(precip, na.rm = TRUE),
+        min = min(precip, na.rm = TRUE),
+        max = max(precip, na.rm = TRUE),
+        n_stations = sum(!is.na(precip))
+      ), by = "date"][order(date)]
+    })
+
+    era_stats = obs[, .(
+      mean = mean(era_precip, na.rm = TRUE),
+      median = median(era_precip, na.rm = TRUE),
+      sd = sd(era_precip, na.rm = TRUE),
+      min = min(era_precip, na.rm = TRUE),
+      max = max(era_precip, na.rm = TRUE),
+      n_stations = sum(!is.na(precip))
+    ), by = "date"][order(date)]
+
+    # Remove rows corresponding to few observations
+    # We had to do this after the simulations, because of the Markov process
+    # used during the simulations, which doesn't handle NAs or missing dates
+    sims = sims[which(obs_stats$n_stations >= n_neighbour_min), , ]
+    era_stats = era_stats[n_stations >= n_neighbour_min]
+    obs_stats = obs_stats[n_stations >= n_neighbour_min]
 
     # Compute different stats over the entire domain
     sim_stats = list(
@@ -188,23 +230,6 @@ parallel::mclapply(
       min = apply(sims, 2, matrixStats::rowMins, na.rm = TRUE),
       max = apply(sims, 2, matrixStats::rowMaxs, na.rm = TRUE)
     )
-
-    obs_stats = obs[, .(
-      mean = mean(tmean, na.rm = TRUE),
-      median = median(tmean, na.rm = TRUE),
-      sd = sd(tmean, na.rm = TRUE),
-      min = min(tmean, na.rm = TRUE),
-      max = max(tmean, na.rm = TRUE),
-      n_stations = sum(!is.na(tmean))
-    ), by = "date"][order(date)]
-
-    era_stats = obs[, .(
-      mean = mean(era_tmean, na.rm = TRUE),
-      median = median(era_tmean, na.rm = TRUE),
-      sd = sd(era_tmean, na.rm = TRUE),
-      min = min(era_tmean, na.rm = TRUE),
-      max = max(era_tmean, na.rm = TRUE)
-    ), by = "date"][order(date)]
 
     # Evaluate the performance of the spatial stat ensembles
     res = list()
@@ -272,6 +297,7 @@ parallel::mclapply(
 
     # Save the results
     saveRDS(res, out_path)
+    message("Done with i = ", i)
   })
 
 # ==============================================================================
@@ -288,37 +314,4 @@ for (i in seq_along(eval_files)) {
 }
 pb$terminate()
 eval = rbindlist(eval, fill = TRUE)
-
-eval
-
-rmse = eval[, .(
-  stat,
-  sim = sapply(rmse, `[`, "sim"),
-  era = sapply(rmse, `[`, "era")
-)]
-rmse[, .(sim = mean(sim), era = mean(era)), by = "stat"]
-
-mae = eval[, .(
-  stat,
-  sim = sapply(mae, `[`, "sim"),
-  era = sapply(mae, `[`, "era")
-)]
-mae[, .(sim = mean(sim), era = mean(era)), by = "stat"]
-
-iqd = eval[, .(
-  stat,
-  sim = sapply(iqd, `[`, "sim"),
-  era = sapply(iqd, `[`, "era")
-)]
-iqd[, .(sim = mean(sim), era = mean(era)), by = "stat"]
-
-eval[, .(
-  coverage_90 = mean(coverage_90),
-  coverage_95 = mean(coverage_95)
-), by = "stat"]
-
-eval[, .(
-  e1 = mean(rank_mean - .5),
-  e2 = mean(rank_sd - 1 / sqrt(12))
-), by = "stat"]
 
