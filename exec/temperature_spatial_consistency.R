@@ -46,6 +46,16 @@ set.seed(20260129)
 base_seed = sample.int(1e8, 1)
 seed_jump = sample.int(1e4, 1)
 
+score_info = as.data.frame(t(do.call(cbind, list(
+  c("rmse", "RMSE", 1),
+  c("mae", "MAE", 1),
+  c("iqd", "IQD", 1),
+  c("quantile_score", "Q01", 1),
+  c("quantile_score", "Q99", 6)
+))))
+names(score_info) = c("name", "shortname", "row_index")
+score_info$row_index = as.integer(score_info$row_index)
+
 # Load the meta data
 # ------------------------------------------------------------------------------
 station_meta = readRDS(meta_path)
@@ -288,37 +298,72 @@ for (i in seq_along(eval_files)) {
 }
 pb$terminate()
 eval = rbindlist(eval, fill = TRUE)
+eval$K = K # This is stupid, but necessary for bootstrap_skillscores()
 
-eval
+stat_names = unique(eval$stat)
 
-rmse = eval[, .(
-  stat,
-  sim = sapply(rmse, `[`, "sim"),
-  era = sapply(rmse, `[`, "era")
+data_types = c("era", "sim")
+bootstrap_data = list()
+for (i in seq_len(nrow(score_info))) {
+  set.seed(base_seed + i * seed_jump)
+  for (stat_name in stat_names) {
+    tmp = bootstrap_skillscores(
+      data = eval[stat == stat_name],
+      score_name = score_info$name[i],
+      data_types = data_types,
+      K_vals = K,
+      row_index = score_info$row_index[i]
+    )
+    tmp$score_name = score_info$shortname[i]
+    tmp$stat = stat_name
+    bootstrap_data[[length(bootstrap_data) + 1]] = tmp
+  }
+}
+bootstrap_data = rbindlist(bootstrap_data)
+bootstrap_data[, let(
+  score_name = factor(score_name, levels = score_info$shortname),
+  stat = factor(
+    stat,
+    levels = c("mean", "sd", "median", "min", "max"),
+    labels = c("Mean", "SD", "Median", "Min", "Max")
+  )
 )]
-rmse[, .(sim = mean(sim), era = mean(era)), by = "stat"]
 
-mae = eval[, .(
-  stat,
-  sim = sapply(mae, `[`, "sim"),
-  era = sapply(mae, `[`, "era")
-)]
-mae[, .(sim = mean(sim), era = mean(era)), by = "stat"]
+plot = bootstrap_data[data_type1 == "sim"] |>
+  copy() |>
+  _[, let(
+    truth = pmax(truth, -1),
+    lower = pmax(lower, -1),
+    upper = pmax(upper, -1)
+  )] |>
+  ggplot() +
+  geom_hline(yintercept = 0) +
+  geom_point(
+    aes(x = score_name, y = truth, col = stat, group = stat),
+    position = position_dodge(.2),
+    size = rel(.8)
+  ) +
+  geom_errorbar(
+    aes(x = score_name, ymin = lower, ymax = upper, col = stat, group = stat),
+    position = position_dodge(.2)
+  ) +
+  scale_y_continuous(breaks = seq(-10, 1, by = .2), limits = c(-1, 1)) +
+  theme_light() +
+  theme(
+    strip.text = element_text(colour = "black", size = rel(1)),
+    strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0"),
+    axis.text.x = element_text(size = rel(1.1), angle = 70, vjust = .5),
+    text = element_text(size = 15)
+  ) +
+  theme(legend.position = "top") +
+  labs(x = "Scoring function", y = "$\\tilde S_{\\text{skill}}(S_1, S_0)$", col = "Statistic")
 
-iqd = eval[, .(
-  stat,
-  sim = sapply(iqd, `[`, "sim"),
-  era = sapply(iqd, `[`, "era")
-)]
-iqd[, .(sim = mean(sim), era = mean(era)), by = "stat"]
+plot_tikz(
+  file = file.path(image_dir, "spatial_consistency_scores.pdf"),
+  plot = plot,
+  width = 8,
+  height = 5
+)
 
-eval[, .(
-  coverage_90 = mean(coverage_90),
-  coverage_95 = mean(coverage_95)
-), by = "stat"]
-
-eval[, .(
-  e1 = mean(rank_mean - .5),
-  e2 = mean(rank_sd - 1 / sqrt(12))
-), by = "stat"]
+"Maybe add a title, so we can combine this with the temperature scores in a nice way?"
 
