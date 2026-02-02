@@ -1187,6 +1187,7 @@ pdf_convert(
 bad_ids = c("135860-99999", "164600-99999", "062730-99999", "166820-99999")
 good_ids = c("075910-99999", "163450-99999", "156150-99999", "067200-99999")
 
+set.seed(base_seed)
 time_series_data = lapply(
   X = c(bad_ids, good_ids),
   FUN = function(my_id) {

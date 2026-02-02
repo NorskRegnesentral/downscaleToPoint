@@ -1085,9 +1085,9 @@ chosen_Ks = c(5, 10, 15, 20, 25, 30)
 data_types = c("full")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
-set.seed(1)
 bootstrap_data = list()
 for (i in seq_len(nrow(score_info))) {
+  set.seed(base_seed + i * seed_jump)
   bootstrap_data[[i]] = bootstrap_skillscores(
     data = eval,
     score_name = score_info$name[i],
@@ -1145,9 +1145,9 @@ chosen_K = 15
 data_types = c("era", "local", "full", "global")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
-set.seed(1)
 bootstrap_data = list()
 for (i in seq_len(nrow(score_info))) {
+  set.seed(base_seed + i * seed_jump)
   bootstrap_data[[i]] = bootstrap_skillscores(
     data = eval,
     score_name = score_info$name[i],
@@ -1511,6 +1511,7 @@ pdf_convert(
 bad_ids = c("013250-99999", "111700-99999", "133780-99999", "112120-99999")
 good_ids = c("152730-99999", "160540-99999", "152640-99999", "067200-99999")
 
+set.seed(base_seed)
 time_series_data = lapply(
   X = c(bad_ids, good_ids),
   FUN = function(my_id) {
@@ -1561,7 +1562,6 @@ time_series_data = lapply(
     data$intensity_offset = fast_mgcv_pred(global_fit$intensity, data)
 
     # Simulate precipitation data using the full model, including both local GAMs and ARMA models
-    set.seed(1)
     sims = simulate_precip_with_donors(
       n_sims = n_sims,
       data = data,
@@ -1575,7 +1575,6 @@ time_series_data = lapply(
     # Remove them if this is the case
     bad_full_donors = get_bad_donor_index(sims, mean, chosen_K)
     if (length(bad_full_donors) > 0) {
-      set.seed(1)
       sims = simulate_precip_with_donors(
         n_sims = n_sims,
         data = data,
