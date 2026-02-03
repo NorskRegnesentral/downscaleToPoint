@@ -380,7 +380,11 @@ plot = bootstrap_data[data_type1 == "sim"] |>
     aes(x = score_name, ymin = lower, ymax = upper, col = stat, group = stat),
     position = position_dodge(.2)
   ) +
-  scale_y_continuous(breaks = seq(-10, 1, by = .2), limits = c(-1, 1)) +
+  scale_y_continuous(
+    breaks = seq(-10, 1, by = .2),
+    limits = c(-1.02, 1.02),
+    expand = c(0, 0)
+  ) +
   theme_light() +
   theme(
     strip.text = element_text(colour = "black", size = rel(1)),
@@ -392,7 +396,7 @@ plot = bootstrap_data[data_type1 == "sim"] |>
   labs(x = "Scoring function", y = "$\\tilde S_{\\text{skill}}(S_1, S_0)$", col = "Statistic")
 
 plot_tikz(
-  file = file.path(image_dir, "spatial_consistency_scores.pdf"),
+  file = file.path(image_dir, "precip_spatial_consistency_scores.pdf"),
   plot = plot,
   width = 8,
   height = 5

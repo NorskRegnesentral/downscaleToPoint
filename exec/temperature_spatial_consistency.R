@@ -359,7 +359,7 @@ plot = bootstrap_data[data_type1 == "sim"] |>
   labs(x = "Scoring function", y = "$\\tilde S_{\\text{skill}}(S_1, S_0)$", col = "Statistic")
 
 plot_tikz(
-  file = file.path(image_dir, "spatial_consistency_scores.pdf"),
+  file = file.path(image_dir, "temp_spatial_consistency_scores.pdf"),
   plot = plot,
   width = 8,
   height = 5
