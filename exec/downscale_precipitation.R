@@ -621,8 +621,14 @@ for (i in seq_along(local_fit_files)) {
 pb$terminate()
 arma_models = do.call(rbind, arma_models)
 quantile(arma_models[, 1], seq(0, 1, by = .05)) # Number of AR terms (p)
+#   0%   5%  10%  15%  20%  25%  30%  35%  40%  45%  50%  55%  60%  65%  70%  75%  80%  85%  90%  95% 100% 
+#    0    0    0    0    0    0    0    0    0    0    0    0    0    0    0    1    1    2    3    5    5 
 quantile(arma_models[, 2], seq(0, 1, by = .05)) # Number of MA terms (q)
+#   0%   5%  10%  15%  20%  25%  30%  35%  40%  45%  50%  55%  60%  65%  70%  75%  80%  85%  90%  95% 100% 
+#    0    0    0    0    0    0    0    0    0    0    0    0    0    0    0    0    1    1    1    2    5 
 quantile(apply(arma_models, 1, sum), seq(0, 1, by = .05)) # p + q
+#   0%   5%  10%  15%  20%  25%  30%  35%  40%  45%  50%  55%  60%  65%  70%  75%  80%  85%  90%  95% 100% 
+#    0    0    0    0    0    0    0    0    0    0    0    1    1    1    1    2    2    3    3    5    6 
 
 # ==============================================================================
 # Evaluation
@@ -1080,7 +1086,6 @@ eval$zero_probs_se = lapply(eval$zero_probs, function(x) (x[, -1] - x[, 1])^2)
 # ------------------------------------------------------------------------------
 
 # Which values of K and which models should we evaluate?
-#chosen_Ks = c(15, 20, 25, 30)
 chosen_Ks = c(5, 10, 15, 20, 25, 30)
 data_types = c("full")
 
@@ -1118,7 +1123,6 @@ plot = bootstrap_data[K1 > K0][K0 <= 15][K0 >= 10][, let(
     aes(x = score_name, ymin = lower, ymax = upper, col = K1, group = K1),
     position = position_dodge(.3)
   ) +
-  #facet_grid(data_type ~ K0) +
   facet_wrap(~K0, nrow = 1) +
   theme_light() +
   theme(

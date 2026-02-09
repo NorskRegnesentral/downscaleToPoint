@@ -8,7 +8,8 @@ library(ncdf4)
 
 # Define all necessary paths
 # ------------------------------------------------------------------------------
-data_dir = file.path(here::here(), "raw_data")
+#data_dir = "/nr/samba/user/smvandeskog/projects/downscaleToPoint/data/"
+data_dir = "~/nr/home/projects/downscaleToPoint/data/"
 image_dir = file.path(data_dir, "images")
 if (!dir.exists(image_dir)) dir.create(image_dir)
 
@@ -88,7 +89,7 @@ plot = ggplot() +
   geom_hex(data = plot_data, aes(x = lon, y = lat), bins = 15) +
   geom_sf(data = map, fill = NA, color = "white") +
   geom_sf(data = cprcm_poly, fill = NA, color = "white", linewidth = 1, linetype = "dashed") +
-  scale_fill_viridis_c() +
+  scale_fill_viridis_c(begin = .1, end = .9) +
   facet_wrap(~tag) +
   coord_sf(
     xlim = sf::st_bbox(plot_data)[c(1, 3)] + c(-.5, 1.5),

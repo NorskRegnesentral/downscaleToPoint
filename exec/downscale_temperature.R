@@ -739,6 +739,7 @@ data_types = c("full")
 # Compute bootstrapped confidence intervals for all the skill scores of interest
 bootstrap_data = list()
 for (i in seq_len(nrow(score_info))) {
+  set.seed(base_seed + i * seed_jump)
   bootstrap_data[[i]] = bootstrap_skillscores(
     data = eval,
     score_name = score_info$name[i],
@@ -795,13 +796,13 @@ plot_tikz(
 # Find the best downscaling model for the best value of K
 # ------------------------------------------------------------------------------
 
-#chosen_K = 15
 chosen_K = 10
 data_types = c("era", "local_deterministic", "full", "global_deterministic")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
 bootstrap_data = list()
 for (i in seq_len(nrow(score_info))) {
+  set.seed(base_seed + i * seed_jump)
   bootstrap_data[[i]] = bootstrap_skillscores(
     data = eval,
     score_name = score_info$name[i],

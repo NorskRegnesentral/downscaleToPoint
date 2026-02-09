@@ -1,23 +1,19 @@
 library(data.table)
-library(mgcv)
-library(here)
 library(ggplot2)
-library(forecast)
 library(matrixStats)
 library(geosphere)
 library(sf)
 library(rnaturalearth)
 library(scico)
-library(MASS)
 library(parallel)
 library(purrr)
 library(patchwork)
 library(downscaleToPoint)
-library(ncdf4)
 
 # Define all necessary paths
 # ------------------------------------------------------------------------------
-data_dir = file.path(here::here(), "raw_data")
+#data_dir = "/nr/samba/user/smvandeskog/projects/downscaleToPoint/data/"
+data_dir = "~/nr/home/projects/downscaleToPoint/data/"
 model_dir = file.path(data_dir, "models", "precipitation")
 image_dir = file.path(data_dir, "images", "precipitation_cprcm")
 local_fits_dir = file.path(model_dir, "local_fits")
@@ -41,9 +37,10 @@ zero_thresholds = c(0, .1, .5, 1) # Different precipitation thresholds for defin
 B = 1000 # Number of bootstraps to use when bootstrapping
 n_bins = 6 # Number of bins to use for hex-plots
 
-# K is the number of neighbours to use for simulating temperature at an unknown location.
-# K_vals is the vector of all values of K we will test during the cross-validation experiment
-K_vals = c(5, 10, 15, 20, 25, 30)
+# Random seeds for reproducibility
+set.seed(20260126)
+base_seed = sample.int(1e8, 1)
+seed_jump = sample.int(1e4, 1)
 
 # Thresholds for computing threshold weighted IQD scores during the cross-validation
 #upper_threshold_probs = c(.8, .9, .95, .99)
@@ -80,96 +77,6 @@ station_meta = station_meta[n_good_precip_flag > 200]
 station_meta = station_meta[n_unique_precip > 40]
 
 # ==============================================================================
-# Functions
-# ==============================================================================
-simulate_occurrence = function(n, fit, data, offset = 0) {
-  # Compute the linear predictor
-  linpred = fast_mgcv_pred(fit, data) + offset
-  # Compute the probability of precipitation occurrence
-  p = fit$family$linkinv(linpred)
-  # Simulate zeros and ones
-  res = rbinom(n * length(p), 1, rep(p, n))
-  # Return the simulated data in a matrix with `n` columns
-  matrix(res, nrow = length(p), ncol = n)
-}
-
-simulate_intensity = function(n, marginal_fit, arma_fit, data, offset = 0) {
-  # Compute the linear predictor
-  linpred = fast_mgcv_pred(marginal_fit, data) + offset
-  # Compute the shape and rate of the local GAM
-  mu = marginal_fit$family$linkinv(linpred)
-  shape = marginal_fit$shape
-  rate = marginal_fit$shape / mu
-  # Simulate Gaussian ARMA time series
-  n_time = max(data$day_count) - min(data$day_count) + 1
-  arma_sims = sapply(
-    X = seq_len(n),
-    FUN = function(i) {
-      as.vector(arima.sim(n = n_time, model = arma_fit$model, sd = sqrt(arma_fit$sigma2)))
-    })
-  # Remove all ARMA simulations from dates where we have no observations, to ensure
-  # that the observed and the simulated data correspond to each other
-  arma_sims = arma_sims[data$day_count - min(data$day_count) + 1, , drop = FALSE]
-  # Censor really large values, to avoind Inf problems when transforming the data
-  arma_sims[arma_sims > qnorm(1 - 2 * .Machine$double.eps)] = qnorm(1 - 2 * .Machine$double.eps)
-  # Transform the ARMA simulations to have gamma marginal distributions, using the PIT
-  res = qgamma(pnorm(arma_sims), shape = shape, rate = rep(rate, n))
-  # Return the simulated data in a matrix with `n` columns
-  matrix(res, nrow = nrow(arma_sims), ncol = n)
-}
-
-simulate_intensity_notime = function(n, fit, data, offset = 0) {
-  # Compute the linear predictor
-  linpred = fast_mgcv_pred(fit, data) + offset
-  # Compute the shape and rate of the local GAM
-  mu = fit$family$linkinv(linpred)
-  shape = fit$shape
-  rate = fit$shape / mu
-  # Simulate the corresponding precipitation intensities
-  res = rgamma(n * length(mu), shape = shape, rate = rate)
-  # Return the simulated data in a matrix with `n` columns
-  matrix(res, nrow = length(mu), ncol = n)
-}
-
-simulate_precip_with_donors = function(n_sims,
-                                       data,
-                                       local_fits,
-                                       occurrence_offset,
-                                       intensity_offset,
-                                       use_arma = TRUE) {
-  K = nrow(local_fits)
-  n_sims_per_local_fit = ceiling(n_sims / K)
-  simulations = lapply(
-    X = seq_len(K),
-    FUN = function(i) {
-      occurrence = simulate_occurrence(
-        n = n_sims_per_local_fit,
-        fit = local_fits$occurrence[[i]],
-        data = data,
-        offset = occurrence_offset
-      )
-      if (use_arma) {
-        intensity = simulate_intensity(
-          n = n_sims_per_local_fit,
-          marginal_fit = local_fits$intensity[[i]],
-          arma_fit = local_fits$intensity_arma[[i]],
-          data = data,
-          offset = intensity_offset
-        )
-      } else {
-        intensity = simulate_intensity_notime(
-          n = n_sims_per_local_fit,
-          fit = local_fits$intensity[[i]],
-          data = data,
-          offset = intensity_offset
-        )
-      }
-      intensity * occurrence
-    })
-  do.call(cbind, simulations)
-}
-
-# ==============================================================================
 # CPRCM stuff
 # ==============================================================================
 
@@ -188,7 +95,10 @@ meta = station_meta |>
 
 global_fit = readRDS(global_fit_path)
 
-K = 20
+K = 15
+
+out_dir = file.path(cv_dir, paste0(K, "_neighbours"))
+if (!dir.exists(out_dir)) dir.create(out_dir)
 
 overwrite = FALSE
 start_time = Sys.time()
@@ -199,6 +109,8 @@ success = parallel::mclapply(
   mc.preschedule = FALSE,
   FUN = function(i) {
 
+    set.seed(base_seed + i * seed_jump)
+
     # Print our progress so far
     time_passed = Sys.time() - start_time
     message(
@@ -206,15 +118,15 @@ success = parallel::mclapply(
       ". Time passed: ", round(as.numeric(time_passed), 2), " ", attr(time_passed, "units")
     )
 
-    out_path = file.path(cv_dir, paste0(meta$id[i], "_", K, "-neighbours.rds"))
+    out_path = file.path(out_dir, paste0(meta$id[i], ".rds"))
     if (!overwrite && file.exists(out_path)) return(NULL)
 
     # Load the data for the current weather station, and add necessary covariates
     data = load_station_data(
       meta = meta[i, ],
       data_dir = data_dir,
-      era_stats = TRUE,
-      rm_bad_flags = TRUE
+      rm_bad_flags = TRUE,
+      rm_na = FALSE
     )
     data[, let(
       yday = yday(date),
@@ -227,14 +139,31 @@ success = parallel::mclapply(
     )]
 
     cprcm_data = readRDS(file.path(data_dir, "cprcm", paste0(meta$id[i], ".rds")))
-
-    cprcm_data = cprcm_data[cprcm_data$date %in% data$date]
-    data = data[data$date %in% cprcm_data$date]
-    stopifnot(nrow(cprcm_data) == nrow(data))
-    if (nrow(data) < 300) return(NULL)
+    cprcm_data = cprcm_data[date %in% data$date]
+    data = data[date %in% cprcm_data$date]
+    if (sum(!is.na(data$precip)) < 300) return(NULL)
     data$cprcm_precip = cprcm_data$precipitation
 
-    data[, let(day_count = as.integer(date) - as.integer(min(date)) + 1L), by = "id"]
+    data[, let(
+      day_count = as.integer(date) - as.integer(min(date)) + 1L,
+      next_era_precip_bool = c(tail(era_precip_bool, -1), NA),
+      next_era_log_precip = c(tail(era_log_precip, -1), NA),
+      next_era_tmean = c(tail(era_tmean, -1), NA)
+    )]
+    data[, let(
+      era_log_precip_change = next_era_log_precip - era_log_precip,
+      era_tmean_change = next_era_tmean - era_tmean
+    )]
+
+    # Add offset from the global GAMs
+    offsets = list()
+    for (name in names(global_fit)) {
+      if (grepl("wet", name)) {
+        offsets[[name]] = fast_mgcv_pred(global_fit[[name]], data[-nrow(data)])
+      } else {
+        offsets[[name]] = fast_mgcv_pred(global_fit[[name]], data)
+      }
+    }
 
     # Compute distances to all other weather stations
     dists = geosphere::distHaversine(
@@ -242,82 +171,99 @@ success = parallel::mclapply(
       p2 = station_meta[, cbind(lon, lat)]
     )
 
-    # Locate and load the local models from the K nearest weather stations
-    # to weather station nr. i
-    nearest_index = order(dists)[-1][seq_len(K)]
-    local_fits = lapply(
-      X = seq_along(nearest_index),
-      FUN = function(j) {
-        path = file.path(local_fits_dir, paste0(station_meta$id[nearest_index[j]], ".rds"))
-        fit = readRDS(path)
-        fit$dist = dists[nearest_index[j]]
-        fit
-      })
+    # Locate and load the local models from the K nearest
+    # weather stations to weather station nr. i
+    local_fits = list()
+    for (index in order(dists)[-1]) {
+      path = file.path(local_fits_dir, paste0(station_meta$id[index], ".rds"))
+      if (!file.exists(path)) next
+      fit = readRDS(path)
+      fit$dist = dists[index]
+      local_fits[[length(local_fits) + 1]] = fit
+      if (length(local_fits) == K) break
+    }
     local_fits = rbindlist(local_fits)
-
-    # Add offsets from the global GAMs
-    data$occurrence_offset = fast_mgcv_pred(global_fit$occurrence, data)
-    data$intensity_offset = fast_mgcv_pred(global_fit$intensity, data)
 
     # Preallocate a list that will hold all simulations from all our different models
     sims = list()
 
-    # Simulate precipitation data using the local GAMs, but not the local ARMA models
-    set.seed(1)
+    # Simulate precipitation data using the local GAMs, without time dependence
     sims$local = simulate_precip_with_donors(
       n_sims = n_sims,
       data = data,
       local_fits = local_fits,
-      occurrence_offset = data$occurrence_offset,
-      intensity_offset = data$intensity_offset,
-      use_arma = FALSE
+      offsets = offsets,
+      intensity_time_dep = FALSE,
+      occurrence_time_dep = FALSE
     )
 
     # Check if any of the donor stations appear to be outliers and
     # Remove them if this is the case
     bad_local_donors = get_bad_donor_index(sims$local, mean, K)
     if (length(bad_local_donors) > 0) {
-      set.seed(1)
       sims$local = simulate_precip_with_donors(
         n_sims = n_sims,
         data = data,
         local_fits = local_fits[-bad_local_donors, ],
-        occurrence_offset = data$occurrence_offset,
-        intensity_offset = data$intensity_offset,
-        use_arma = FALSE
+        offsets = offsets,
+        intensity_time_dep = FALSE,
+        occurrence_time_dep = FALSE
       )
     }
 
-    # Simulate precipitation data using the full model, including both local GAMs and ARMA models
-    set.seed(1)
+    # Simulate precipitation data using the *old* full model,
+    # which only has temporal dependence in the intensity model
+    sims$old_full = simulate_precip_with_donors(
+      n_sims = n_sims,
+      data = data,
+      local_fits = local_fits,
+      offsets = offsets,
+      intensity_time_dep = TRUE,
+      occurrence_time_dep = FALSE
+    )
+
+    # Check if any of the donor stations appear to be outliers and
+    # Remove them if this is the case
+    bad_old_full_donors = get_bad_donor_index(sims$old_full, mean, K)
+    if (length(bad_old_full_donors) > 0) {
+      sims$old_full = simulate_precip_with_donors(
+        n_sims = n_sims,
+        data = data,
+        local_fits = local_fits[-bad_old_full_donors],
+        offsets = offsets,
+        intensity_time_dep = TRUE,
+        occurrence_time_dep = FALSE
+      )
+    }
+
+    # Simulate precipitation data using the full model,
+    # which has time dependence for both intensity and occurrence
     sims$full = simulate_precip_with_donors(
       n_sims = n_sims,
       data = data,
       local_fits = local_fits,
-      occurrence_offset = data$occurrence_offset,
-      intensity_offset = data$intensity_offset,
-      use_arma = TRUE
+      offsets = offsets,
+      intensity_time_dep = TRUE,
+      occurrence_time_dep = TRUE
     )
 
     # Check if any of the donor stations appear to be outliers and
     # Remove them if this is the case
     bad_full_donors = get_bad_donor_index(sims$full, mean, K)
     if (length(bad_full_donors) > 0) {
-      set.seed(1)
       sims$full = simulate_precip_with_donors(
         n_sims = n_sims,
         data = data,
         local_fits = local_fits[-bad_full_donors],
-        occurrence_offset = data$occurrence_offset,
-        intensity_offset = data$intensity_offset,
-        use_arma = TRUE
+        offsets = offsets,
+        intensity_time_dep = TRUE,
+        occurrence_time_dep = TRUE
       )
     }
 
     # Simulate precipitation data using the global model
     sims$global = local({
-      set.seed(1)
-      occurrence = simulate_occurrence(
+      occurrence = simulate_occurrence_notime(
         n = n_sims,
         fit = global_fit$occurrence,
         data = data
@@ -339,11 +285,16 @@ success = parallel::mclapply(
       neighbour_dists = list(local_fits$dist),
       n_obs = sum(!is.na(data$precip)),
       n_bad_local_donors = length(bad_local_donors),
-      n_bad_full_donors = length(bad_full_donors)
+      n_bad_full_donors = length(bad_full_donors),
+      n_bad_old_full_donors = length(bad_old_full_donors)
     )
 
     # Start evaluating the different model simulations
     # ------------------------------------------------
+
+    # First, remove NAs
+    for (j in seq_along(sims)) sims[[j]] = sims[[j]][!is.na(data$precip), ]
+    data = data[!is.na(precip)]
 
     # Compare the ensemble means and ERA5 with the observed data, using RMSE
     rmse = function(x, y, ...) sqrt(mean((x - y)^2, ...))
@@ -383,7 +334,10 @@ success = parallel::mclapply(
     )
     obs_zero_probs = sapply(zero_thresholds, function(x) mean(data$precip <= x, na.rm = TRUE))
     era_zero_probs = sapply(zero_thresholds, function(x) mean(data$era_precip <= x, na.rm = TRUE))
-    cprcm_zero_probs = sapply(zero_thresholds, function(x) mean(data$cprcm_precip <= x, na.rm = TRUE))
+    cprcm_zero_probs = sapply(
+      zero_thresholds,
+      function(x) mean(data$cprcm_precip <= x, na.rm = TRUE)
+    )
     res$zero_probs = list(cbind(
       obs = obs_zero_probs,
       cprcm = cprcm_zero_probs,
@@ -488,11 +442,15 @@ success = parallel::mclapply(
     # Compute all n-day differences for ERA
     era_diffs = lapply(
       diff_lengths,
-      function(j) tail(data_with_all_dates$era_precip, -j) - head(data_with_all_dates$era_precip, -j)
+      function(j) {
+        tail(data_with_all_dates$era_precip, -j) - head(data_with_all_dates$era_precip, -j)
+      }
     )
     cprcm_diffs = lapply(
       diff_lengths,
-      function(j) tail(data_with_all_dates$cprcm_precip, -j) - head(data_with_all_dates$cprcm_precip, -j)
+      function(j) {
+        tail(data_with_all_dates$cprcm_precip, -j) - head(data_with_all_dates$cprcm_precip, -j)
+      }
     )
     # Compute all n-day differences for each simulated ensemble member
     non_na_index = which(!is.na(data_with_all_dates$precip))
@@ -512,8 +470,14 @@ success = parallel::mclapply(
       })
 
     # Compare the marginal distributions of the n-day differences using IQD
-    era_diff_iqd = sapply(seq_along(era_diffs), function(j) iqd(era_diffs[[j]], obs_diffs[[j]]))
-    cprcm_diff_iqd = sapply(seq_along(cprcm_diffs), function(j) iqd(cprcm_diffs[[j]], obs_diffs[[j]]))
+    era_diff_iqd = sapply(
+      seq_along(era_diffs),
+      function(j) iqd(era_diffs[[j]], obs_diffs[[j]])
+    )
+    cprcm_diff_iqd = sapply(
+      seq_along(cprcm_diffs),
+      function(j) iqd(cprcm_diffs[[j]], obs_diffs[[j]])
+    )
     sims_diff_iqd = sapply(
       X = sims_diffs,
       FUN = function(x) {
@@ -526,9 +490,9 @@ success = parallel::mclapply(
       cprcm = cprcm_diff_iqd,
       era = era_diff_iqd,
       sims_diff_iqd))
-    
-    # Compare marginal distributions for the weekly means and standard deviations of precipitation data
-    # from observations, ERA5 and simulated precipitation.
+
+    # Compare marginal distributions for the weekly means and standard deviations
+    # of precipitation data from observations, ERA5 and simulated precipitation.
     #
     # week_indices is a data.table, describing which rows of `data` that contain data from which
     # week/year combinations
@@ -586,8 +550,8 @@ success = parallel::mclapply(
       era = weekly_sd_era_iqd,
       weekly_sd_sim_iqd))
 
-    # Compare marginal distributions for the monthly means and standard deviations of precipitation data
-    # from observations, ERA5 and simulated precipitation.
+    # Compare marginal distributions for the monthly means and standard deviations
+    # of precipitation data from observations, ERA5 and simulated precipitation.
     #
     # month_indices is a data.table, describing which rows of `data` that contain data from which
     # month/year combinations
@@ -668,18 +632,17 @@ eval = rbindlist(eval, fill = TRUE)
 # Add the zero prob squared error score to eval
 eval$zero_probs_se = lapply(eval$zero_probs, function(x) (x[, -1] - x[, 1])^2)
 
-chosen_K = 20
 data_types = c("era", "local", "full", "global", "cprcm")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
-set.seed(1)
 bootstrap_data = list()
 for (i in seq_len(nrow(score_info))) {
+  set.seed(base_seed + i * seed_jump)
   bootstrap_data[[i]] = bootstrap_skillscores(
     data = eval,
     score_name = score_info$name[i],
     data_types = data_types,
-    K_vals = chosen_K,
+    K_vals = K,
     row_index = score_info$row_index[i]
   )
   bootstrap_data[[i]]$score_name = score_info$shortname[i]
@@ -739,7 +702,7 @@ for (i in seq_len(nrow(score_info))) {
     data = eval,
     score_name = score_info$name[i],
     data_types = data_types,
-    K_vals = chosen_K,
+    K_vals = K,
     row_index = score_info$row_index[i]
   )
   score_data[[i]]$score_name = score_info$shortname[i]
@@ -828,7 +791,7 @@ for (i in seq_len(nrow(score_info))) {
     data = eval,
     score_name = score_info$name[i],
     data_types = data_types,
-    K_vals = chosen_K,
+    K_vals = K,
     row_index = score_info$row_index[i]
   )
   score_data[[i]]$score_name = score_info$shortname[i]
@@ -841,7 +804,6 @@ precip_data = load_station_data(
   meta = meta,
   data_dir = data_dir,
   verbose = TRUE,
-  era_stats = TRUE,
   rm_bad_flags = TRUE
 )
 precip_data = precip_data[, .(

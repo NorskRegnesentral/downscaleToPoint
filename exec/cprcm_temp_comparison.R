@@ -1,23 +1,19 @@
 library(data.table)
-library(mgcv)
-library(here)
 library(ggplot2)
-library(forecast)
 library(matrixStats)
 library(geosphere)
 library(sf)
 library(rnaturalearth)
 library(scico)
-library(MASS)
 library(parallel)
 library(purrr)
 library(patchwork)
 library(downscaleToPoint)
-library(ncdf4)
 
 # Define all necessary paths
 # ------------------------------------------------------------------------------
-data_dir = file.path(here::here(), "raw_data")
+#data_dir = "/nr/samba/user/smvandeskog/projects/downscaleToPoint/data/"
+data_dir = "~/nr/home/projects/downscaleToPoint/data/"
 model_dir = file.path(data_dir, "models", "temperature")
 image_dir = file.path(data_dir, "images", "temperature_cprcm")
 local_fits_dir = file.path(model_dir, "local_fits")
@@ -40,9 +36,10 @@ diff_lengths = c(1, 3, 7) # Which n-day-differences to evaluate in the cross-val
 B = 1000 # Number of bootstraps to use when bootstrapping
 n_bins = 6 # Number of bins to use for hex-plots
 
-# K is the number of neighbours to use for simulating temperature at an unknown location.
-# K_vals is the vector of all values of K we will test during the cross-validation experiment
-K_vals = c(5, 10, 15, 20, 25, 30)
+# Random seeds for reproducibility
+set.seed(20260127)
+base_seed = sample.int(1e8, 1)
+seed_jump = sample.int(1e4, 1)
 
 # Thresholds for computing threshold weighted IQD scores during the cross-validation
 #upper_threshold_probs = c(.8, .9, .95, .99)
@@ -76,68 +73,6 @@ station_meta = readRDS(meta_path)
 station_meta = station_meta[n_tmean > 200]
 
 # ==============================================================================
-# Functions
-# ==============================================================================
-
-simulate_tmean = function(n, marginal_fit, arma_fit, data, offset = 0) {
-  # Compute the linear predictor
-  linpred = fast_mgcv_pred(marginal_fit, data) + offset
-  # Simulate Gaussian ARMA time series
-  n_time = max(data$day_count) - min(data$day_count) + 1
-  arma_sims = sapply(
-    X = seq_len(n),
-    FUN = function(i) {
-      as.vector(arima.sim(n = n_time, model = arma_fit$model, sd = sqrt(arma_fit$sigma2)))
-    })
-  # Remove all ARMA simulations from dates where we have no observations, to ensure
-  # that the observed and the simulated data correspond to each other
-  arma_sims = arma_sims[data$day_count - min(data$day_count) + 1, , drop = FALSE]
-  # Transform the ARMA simulations to have the same marginal distribution as the local fit
-  res = arma_sims * marginal_fit$sig2 + linpred
-  # Return the simulated data in a matrix with `n` columns
-  matrix(res, nrow = nrow(arma_sims), ncol = n)
-}
-
-simulate_tmean_notime = function(n, fit, data, offset = 0) {
-  # Compute the linear predictor
-  linpred = fast_mgcv_pred(fit, data) + offset
-  # Simulate the corresponding temperature means
-  res = rnorm(n * length(linpred), mean = linpred, sd = fit$sig2)
-  # Return the simulated data in a matrix with `n` columns
-  matrix(res, nrow = length(linpred), ncol = n)
-}
-
-simulate_tmean_with_donors = function(n_sims,
-                                      data,
-                                      local_fits,
-                                      offset,
-                                      use_arma = TRUE) {
-  K = nrow(local_fits)
-  n_sims_per_local_fit = ceiling(n_sims / K)
-  simulations = lapply(
-    X = seq_len(K),
-    FUN = function(i) {
-      if (use_arma) {
-        simulate_tmean(
-          n = n_sims_per_local_fit,
-          marginal_fit = local_fits$marginal_fit[[i]],
-          arma_fit = local_fits$arma_fit[[i]],
-          data = data,
-          offset = offset
-        )
-      } else {
-         simulate_tmean_notime(
-          n = n_sims_per_local_fit,
-          fit = local_fits$marginal_fit[[i]],
-          data = data,
-          offset = offset
-        )
-      }
-    })
-  do.call(cbind, simulations)
-}
-
-# ==============================================================================
 # CPRCM stuff
 # ==============================================================================
 
@@ -158,6 +93,9 @@ global_fit = readRDS(global_fit_path)
 
 K = 10
 
+out_dir = file.path(cv_dir, paste0(K, "_neighbours"))
+if (!dir.exists(out_dir)) dir.create(out_dir)
+
 overwrite = FALSE
 start_time = Sys.time()
 
@@ -167,6 +105,8 @@ success = parallel::mclapply(
   mc.preschedule = FALSE,
   FUN = function(i) {
 
+    set.seed(base_seed + i * seed_jump)
+
     # Print our progress so far
     time_passed = Sys.time() - start_time
     message(
@@ -174,7 +114,7 @@ success = parallel::mclapply(
       ". Time passed: ", round(as.numeric(time_passed), 2), " ", attr(time_passed, "units")
     )
 
-    out_path = file.path(cv_dir, paste0(meta$id[i], "_", K, "-neighbours.rds"))
+    out_path = file.path(out_dir, paste0(meta$id[i], ".rds"))
     if (!overwrite && file.exists(out_path)) return(NULL)
 
     # Load the data for the current weather station, and add necessary covariates
@@ -196,7 +136,7 @@ success = parallel::mclapply(
     cprcm_data = cprcm_data[cprcm_data$date %in% data$date]
     data = data[data$date %in% cprcm_data$date]
     stopifnot(nrow(cprcm_data) == nrow(data))
-    if (nrow(data) < 300) return(NULL)
+    if (sum(!is.na(data$tmean)) < 300) return(NULL)
     data$cprcm_tmean = cprcm_data$temperature
 
     data[, let(day_count = as.integer(date) - as.integer(min(date)) + 1L), by = "id"]
@@ -209,15 +149,15 @@ success = parallel::mclapply(
 
     # Locate and load the local models from the K nearest weather stations
     # to weather station nr. i
-    nearest_index = order(dists)[-1][seq_len(K)]
-    local_fits = lapply(
-      X = seq_along(nearest_index),
-      FUN = function(j) {
-        path = file.path(local_fits_dir, paste0(station_meta$id[nearest_index[j]], ".rds"))
-        fit = readRDS(path)
-        fit$dist = dists[nearest_index[j]]
-        fit
-      })
+    local_fits = list()
+    for (index in order(dists)[-1]) {
+      path = file.path(local_fits_dir, paste0(station_meta$id[index], ".rds"))
+      if (!file.exists(path)) next
+      fit = readRDS(path)
+      fit$dist = dists[index]
+      local_fits[[length(local_fits) + 1]] = fit
+      if (length(local_fits) == K) break
+    }
     local_fits = rbindlist(local_fits)
 
     # Add the offset from the global GAM
@@ -227,13 +167,12 @@ success = parallel::mclapply(
     sims = list()
 
     # Simulate temperature data using the local GAMs, but not the local ARMA models
-    set.seed(1)
     sims$local = simulate_tmean_with_donors(
       n_sims = n_sims,
       data = data,
       local_fits = local_fits,
       offset = data$tmean_offset,
-      use_arma = FALSE
+      time_dep = FALSE
     )
 
     # Check if any of the donor stations appear to be outliers and
@@ -243,13 +182,12 @@ success = parallel::mclapply(
       get_bad_donor_index(sims$local, sd, K)
     ))
     if (length(bad_local_donors) > 0) {
-      set.seed(1)
       sims$local = simulate_tmean_with_donors(
         n_sims = n_sims,
         data = data,
         local_fits = local_fits[-bad_local_donors, ],
         offset = data$tmean_offset,
-        use_arma = FALSE
+        time_dep = FALSE
       )
     }
 
@@ -276,13 +214,12 @@ success = parallel::mclapply(
     )
 
     # Simulate temperature data using the full model, including both local GAMs and ARMA models
-    set.seed(1)
     sims$full = simulate_tmean_with_donors(
       n_sims = n_sims,
       data = data,
       local_fits = local_fits,
       offset = data$tmean_offset,
-      use_arma = TRUE
+      time_dep = TRUE
     )
 
     # Check if any of the donor stations appear to be outliers and
@@ -292,18 +229,16 @@ success = parallel::mclapply(
       get_bad_donor_index(sims$full, sd, K)
     ))
     if (length(bad_full_donors) > 0) {
-      set.seed(1)
       sims$full = simulate_tmean_with_donors(
         n_sims = n_sims,
         data = data,
         local_fits = local_fits[-bad_full_donors, ],
         offset = data$tmean_offset,
-        use_arma = TRUE
+        time_dep = TRUE
       )
     }
 
     # Simulate temperature means using the global model
-    set.seed(1)
     sims$global = simulate_tmean_notime(
       n = n_sims,
       fit = global_fit,
@@ -425,7 +360,10 @@ success = parallel::mclapply(
 
     # Compare the marginal distributions of the n-day differences using IQD
     era_diff_iqd = sapply(seq_along(era_diffs), function(j) iqd(era_diffs[[j]], obs_diffs[[j]]))
-    cprcm_diff_iqd = sapply(seq_along(cprcm_diffs), function(j) iqd(cprcm_diffs[[j]], obs_diffs[[j]]))
+    cprcm_diff_iqd = sapply(
+      seq_along(cprcm_diffs),
+      function(j) iqd(cprcm_diffs[[j]], obs_diffs[[j]])
+    )
     sims_diff_iqd = sapply(
       X = sims_diffs,
       FUN = function(x) {
@@ -578,18 +516,17 @@ pb$terminate()
 eval = rbindlist(eval, fill = TRUE)
 
 
-chosen_K = 10
 data_types = c("cprcm", "era", "local_deterministic", "full", "global_deterministic")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
-set.seed(1)
 bootstrap_data = list()
 for (i in seq_len(nrow(score_info))) {
+  set.seed(base_seed + i * seed_jump)
   bootstrap_data[[i]] = bootstrap_skillscores(
     data = eval,
     score_name = score_info$name[i],
     data_types = data_types,
-    K_vals = chosen_K,
+    K_vals = K,
     row_index = score_info$row_index[i]
   )
   bootstrap_data[[i]]$score_name = score_info$shortname[i]
@@ -660,7 +597,7 @@ for (i in seq_len(nrow(score_info))) {
     data = eval,
     score_name = score_info$name[i],
     data_types = data_types,
-    K_vals = chosen_K,
+    K_vals = K,
     row_index = score_info$row_index[i]
   )
   score_data[[i]]$score_name = score_info$shortname[i]
@@ -749,7 +686,7 @@ for (i in seq_len(nrow(score_info))) {
     data = eval,
     score_name = score_info$name[i],
     data_types = data_types,
-    K_vals = chosen_K,
+    K_vals = K,
     row_index = score_info$row_index[i]
   )
   score_data[[i]]$score_name = score_info$shortname[i]
@@ -880,10 +817,10 @@ pdf_convert(
 # Create a map plot for raw RMSE and MAE values
 # ------------------------------------------------------------------------------
 
-rmse_data = as.data.table(do.call(rbind, eval[K == chosen_K, rmse]))
-mae_data = as.data.table(do.call(rbind, eval[K == chosen_K, mae]))
-rmse_data = rmse_data[, .(full, cprcm)][, let(id = eval[K == chosen_K, id], tag = "rmse")]
-mae_data = mae_data[, .(full, cprcm)][, let(id = eval[K == chosen_K, id], tag = "mae")]
+rmse_data = as.data.table(do.call(rbind, eval[K == K, rmse]))
+mae_data = as.data.table(do.call(rbind, eval[K == K, mae]))
+rmse_data = rmse_data[, .(full, cprcm)][, let(id = eval[K == K, id], tag = "rmse")]
+mae_data = mae_data[, .(full, cprcm)][, let(id = eval[K == K, id], tag = "mae")]
 
 plot_data = rbind(
   melt(rmse_data, id.vars = c("id", "tag")),
