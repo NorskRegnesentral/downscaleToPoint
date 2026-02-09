@@ -189,6 +189,7 @@ simulate_tmean = function(n, marginal_fit, arma_fit, data, offset = 0) {
   matrix(res, nrow = nrow(arma_sims), ncol = n)
 }
 
+#' @export
 simulate_tmean_notime = function(n, fit, data, offset = 0) {
   # Compute the linear predictor
   linpred = fast_mgcv_pred(fit, data) + offset
@@ -197,4 +198,3 @@ simulate_tmean_notime = function(n, fit, data, offset = 0) {
   # Return the simulated data in a matrix with `n` columns
   matrix(res, nrow = length(linpred), ncol = n)
 }
-
