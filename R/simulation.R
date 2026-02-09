@@ -81,6 +81,7 @@ simulate_precip_with_donors = function(n_sims,
   do.call(cbind, simulations)
 }
 
+#' @export
 simulate_occurrence_notime = function(n, fit, data, offset = 0) {
   # Compute the linear predictor
   linpred = fast_mgcv_pred(fit, data) + offset
@@ -92,6 +93,7 @@ simulate_occurrence_notime = function(n, fit, data, offset = 0) {
   matrix(res, nrow = length(p), ncol = n)
 }
 
+#' @export
 simulate_occurrence = function(n,
                                dry_to_wet_fit,
                                wet_to_wet_fit,
@@ -131,6 +133,7 @@ simulate_occurrence = function(n,
   out
 }
 
+#' @export
 simulate_intensity = function(n, marginal_fit, arma_fit, data, offset = 0) {
   # Compute the linear predictor
   linpred = fast_mgcv_pred(marginal_fit, data) + offset
@@ -156,6 +159,7 @@ simulate_intensity = function(n, marginal_fit, arma_fit, data, offset = 0) {
   matrix(res, nrow = nrow(arma_sims), ncol = n)
 }
 
+#' @export
 simulate_intensity_notime = function(n, fit, data, offset = 0) {
   # Compute the linear predictor
   linpred = fast_mgcv_pred(fit, data) + offset
@@ -170,6 +174,7 @@ simulate_intensity_notime = function(n, fit, data, offset = 0) {
 }
 
 
+#' @export
 simulate_tmean = function(n, marginal_fit, arma_fit, data, offset = 0) {
   # Compute the linear predictor
   linpred = fast_mgcv_pred(marginal_fit, data) + offset
