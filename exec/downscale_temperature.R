@@ -728,7 +728,6 @@ for (i in seq_along(eval_files)) {
 pb$terminate()
 eval = rbindlist(eval, fill = TRUE)
 
-
 # Find the best value of K
 # ------------------------------------------------------------------------------
 
@@ -862,6 +861,130 @@ plot_tikz(
   width = 11,
   height = 5
 )
+
+# ==============================================================================
+# Create (skill) score scatter plots
+# ==============================================================================
+
+# we can look at skill on the y-axis against distance-to-sea, elevation, climatology
+# we can also plot scores for the full model on the y-axis and for ERA on the x-axis
+
+data_types = c("full", "era")
+
+score_data = list()
+for (i in seq_len(nrow(score_info))) {
+  score_data[[i]] = get_scores(
+    data = eval,
+    score_name = score_info$name[i],
+    data_types = data_types,
+    K_vals = chosen_K,
+    row_index = score_info$row_index[i]
+  )
+  score_data[[i]]$score_name = score_info$shortname[i]
+}
+score_data = rbindlist(score_data)
+score_data = merge(score_data, station_meta[, .(id, lon, lat, elev, elev_mean)], by = "id")
+score_data[, let(elev_diff = elev - elev_mean)]
+
+# Add distance to the sea
+# ------------------------------------------------------------------------------
+land_mask_path = file.path(data_dir, "era-land-mask.nc")
+nc = ncdf4::nc_open(land_mask_path)
+land_mask = ncdf4::ncvar_get(nc, "lsm")
+land_mask_lon = ncdf4::ncvar_get(nc, "longitude")
+land_mask_lon[land_mask_lon > 180] = land_mask_lon[land_mask_lon > 180] - 360
+land_mask_lat = ncdf4::ncvar_get(nc, "latitude")
+ncdf4::nc_close(nc)
+
+get_dist_to_sea = function(lon, lat) {
+  max_dist = .5
+  while (TRUE) {
+    lon_index = which(abs(land_mask_lon - lon) < max_dist)
+    lat_index = which(abs(land_mask_lat - lat) < max_dist)
+    land_mask_selection = land_mask[lon_index, lat_index]
+    if (any(land_mask_selection < .1)) break
+    max_dist = max_dist * 2
+  }
+  land_mask_coords = expand.grid(lon = land_mask_lon[lon_index], lat = land_mask_lat[lat_index])
+  distances = geosphere::distHaversine(c(lon, lat), land_mask_coords)
+  distances_to_sea_cells = distances[land_mask_selection < .3]
+  min(distances_to_sea_cells)
+}
+
+score_data[, let(dist_to_sea = get_dist_to_sea(lon[1], lat[1])), by = c("lon", "lat")]
+
+# Add temperature climatologies
+# ------------------------------------------------------------------------------
+
+tmean_means = parallel::mclapply(
+  X = seq_len(nrow(station_meta)),
+  mc.cores = 8,
+  mc.preschedule = FALSE,
+  FUN = function(i) {
+    if (i %% 100 == 0) message(i, " / ", nrow(station_meta))
+    data = load_station_data(
+      meta = station_meta[i],
+      data_dir = data_dir,
+      verbose = FALSE,
+      rm_na = FALSE
+    )
+    data.table(
+      id = station_meta$id[i],
+      tmean_mean = mean(data$era_tmean, na.rm = TRUE)
+    )
+  }
+)
+tmean_means = rbindlist(tmean_means)
+
+score_data = merge(score_data, tmean_means, by = "id")
+
+# Create the actual scatter plots
+# ------------------------------------------------------------------------------
+
+# Skill scatter plots with different variables along the x-axis
+x_vars = c("elev", "elev_diff", "dist_to_sea", "era", "tmean_mean")
+for (x_var in x_vars) {
+  plot_data = score_data |>
+    dcast(... ~ data_type, value.var = "value") |>
+    _[, let(skill = skill_score(full, era))] |>
+    _[, let(
+      lower = quantile(skill, .05, na.rm = TRUE),
+      upper = quantile(skill, .95, na.rm = TRUE)
+    ), by = "score_name"]
+    #_[skill >= lower & skill <= upper]
+  x_var_scales = ifelse(x_var == "era", "free", "free_y")
+  if (x_var == "elev_diff") plot_data[[x_var]] = abs(plot_data[[x_var]])
+  plot = ggplot(plot_data) +
+    geom_point(aes(x = !!sym(x_var), y = skill), alpha = .2) +
+    #geom_smooth(aes(x = !!sym(x_var), y = skill)) +
+    #geom_hex(aes(x = !!sym(x_var), y = skill)) +
+    #scale_fill_viridis_c(begin = .1, end = .9, trans = "pseudo_log") +
+    labs(x = x_var, y = "Skill") +
+    facet_wrap(~score_name, scales = x_var_scales, ncol = 5) +
+    theme_light() +
+    lims(y = c(-1, 1)) +
+    theme(
+      strip.text = element_text(colour = "black"),
+      strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0")
+    )
+  png(
+    filename = file.path(image_dir, paste0("skill-vs-", x_var, ".png")),
+    width = 10, height = 6, units = "in", res = 150
+  )
+  print(plot)
+  dev.off()
+}
+
+"Temperature:"
+"We see a strong correlation between several skill scores and elev_diff"
+"We don't see that for the MS score."
+"When we look at tmean_mean, then the correlations are stronger for MS, and weaker for RMSE."
+"So we could show both and use that to talk about how nice it is to use multiple scores."
+
+"For precip, we also find strong trends in many of the temporal skill scores when looking at dist_to_sea"
+"we find strong trends in absolute scores vs. precip_mean, but is that nice/interesting to show? Does it fit nicely into the story?"
+
+"Maybe I can drop the smooth terms? They are great for the temperature data, but not so great for the precip data..."
 
 # Create a map plot for skill scores between the full model and ERA5
 # ------------------------------------------------------------------------------

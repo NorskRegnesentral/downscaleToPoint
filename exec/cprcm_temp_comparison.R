@@ -12,8 +12,7 @@ library(downscaleToPoint)
 
 # Define all necessary paths
 # ------------------------------------------------------------------------------
-#data_dir = "/nr/samba/user/smvandeskog/projects/downscaleToPoint/data/"
-data_dir = "~/nr/home/projects/downscaleToPoint/data/"
+data_dir = "/nr/samba/user/smvandeskog/projects/downscaleToPoint/data/"
 model_dir = file.path(data_dir, "models", "temperature")
 image_dir = file.path(data_dir, "images", "temperature_cprcm")
 local_fits_dir = file.path(model_dir, "local_fits")
@@ -505,7 +504,7 @@ success = parallel::mclapply(
   })
 
 # Load all eval data from the cross-validation experiment
-eval_files = list.files(cv_dir, full.names = TRUE)
+eval_files = list.files(out_dir, full.names = TRUE)
 eval = vector("list", length(eval_files))
 pb = progress_bar(length(eval_files))
 for (i in seq_along(eval_files)) {
@@ -514,7 +513,6 @@ for (i in seq_along(eval_files)) {
 }
 pb$terminate()
 eval = rbindlist(eval, fill = TRUE)
-
 
 data_types = c("cprcm", "era", "local_deterministic", "full", "global_deterministic")
 
