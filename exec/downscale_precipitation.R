@@ -1297,15 +1297,12 @@ x_vars = c("elev", "elev_diff", "dist_to_sea", "era", "precip_mean")
 for (x_var in x_vars) {
   plot_data = score_data |>
     dcast(... ~ data_type, value.var = "value") |>
-    #_[, let(skill = pmax(-1, skill_score(full, era)))]
     _[, let(skill = skill_score(full, era))]
   x_var_scales = ifelse(x_var == "era", "free", "free_y")
   if (x_var == "elev_diff") plot_data[[x_var]] = abs(plot_data[[x_var]])
   plot = ggplot(plot_data) +
     geom_point(aes(x = !!sym(x_var), y = skill), alpha = .2) +
     geom_smooth(aes(x = !!sym(x_var), y = skill)) +
-    #geom_hex(aes(x = !!sym(x_var), y = skill)) +
-    scale_fill_viridis_c(begin = .1, end = .9, trans = "pseudo_log") +
     labs(x = x_var, y = "Skill") +
     facet_wrap(~score_name, scales = x_var_scales, ncol = 5) +
     theme_light() +
@@ -1321,6 +1318,35 @@ for (x_var in x_vars) {
   print(plot)
   dev.off()
 }
+
+# full model score scatter plots with different variables along the x-axis
+x_vars = c("elev", "elev_diff", "dist_to_sea", "era", "precip_mean")
+for (x_var in x_vars) {
+  plot_data = score_data |>
+    dcast(... ~ data_type, value.var = "value") |>
+    _[, let(upper = quantile(full, .998)), by = "score_name"] |>
+    _[full <= upper]
+  x_var_scales = ifelse(x_var == "era", "free", "free_y")
+  if (x_var == "elev_diff") plot_data[[x_var]] = abs(plot_data[[x_var]])
+  plot = ggplot(plot_data) +
+    geom_point(aes(x = !!sym(x_var), y = full), alpha = .2) +
+    geom_smooth(aes(x = !!sym(x_var), y = full)) +
+    labs(x = x_var, y = "Skill") +
+    facet_wrap(~score_name, scales = x_var_scales, ncol = 5) +
+    theme_light() +
+    theme(
+      strip.text = element_text(colour = "black"),
+      strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0")
+    )
+  png(
+    filename = file.path(image_dir, paste0("full-score-vs-", x_var, ".png")),
+    width = 10, height = 6, units = "in", res = 150
+  )
+  print(plot)
+  dev.off()
+}
+
+
 
 # Create a map plot for skill scores between the full model and ERA5
 # ------------------------------------------------------------------------------

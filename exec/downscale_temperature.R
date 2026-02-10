@@ -981,10 +981,8 @@ for (x_var in x_vars) {
 "When we look at tmean_mean, then the correlations are stronger for MS, and weaker for RMSE."
 "So we could show both and use that to talk about how nice it is to use multiple scores."
 
-"For precip, we also find strong trends in many of the temporal skill scores when looking at dist_to_sea"
-"we find strong trends in absolute scores vs. precip_mean, but is that nice/interesting to show? Does it fit nicely into the story?"
-
-"Maybe I can drop the smooth terms? They are great for the temperature data, but not so great for the precip data..."
+"Precip:
+We see a strong correlation between raw MAE/RMSE scores and precip totals, but when we look at skill scores, this is gone. This shows that RMSE/MAE basicly are proxies for precipitation totals, and that looking at skills instead of raw scores fixes some of the problems"
 
 # Create a map plot for skill scores between the full model and ERA5
 # ------------------------------------------------------------------------------
