@@ -1288,6 +1288,7 @@ precip_means = parallel::mclapply(
 precip_means = rbindlist(precip_means)
 
 score_data = merge(score_data, precip_means, by = "id")
+score_data$precip_yearly_sum = score_data$precip_mean * 365
 
 # Create the actual scatter plots
 # ------------------------------------------------------------------------------
@@ -1346,7 +1347,46 @@ for (x_var in x_vars) {
   dev.off()
 }
 
+y_vars = c("full", "skill")
+pretty_names = c("Score", "Skill score")
+plots = list()
+for (i in seq_along(y_vars)) {
+  y_var = y_vars[i]
+  plot_data = score_data |>
+    dcast(... ~ data_type, value.var = "value") |>
+    _[, let(skill = skill_score(full, era))] |>
+    _[score_name %in% c("MS", "RMSE", "MAE")]
+  if (y_var == "full") {
+    plot_data[, let(upper = quantile(full, .998)), by = "score_name"]
+    plot_data = plot_data[full < upper]
+  }
+  plots[[i]] = ggplot(plot_data) +
+    geom_point(aes(x = precip_yearly_sum, y = !!sym(y_var)), alpha = .2) +
+    #geom_smooth(aes(x = precip_yearly_sum, y = !!sym(y_var))) +
+    labs(x = "Mean annual ERA5 precipitation sum [mm/year]", y = pretty_names[i]) +
+    facet_wrap(~score_name, scales = "free_y") +
+    theme_light() +
+    theme(
+      strip.text = element_text(colour = "black"),
+      strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0")
+    )
+  if (y_var == "skill") plots[[i]] = plots[[i]] + lims(y = c(-1, 1))
+}
+plot = patchwork::wrap_plots(plots, ncol = 1)
 
+plot_tikz(
+  plot = plot,
+  file = file.path(image_dir, "precip_scatter.pdf"),
+  width = 8,
+  height = 5,
+  tex_engine = "lualatex"
+)
+
+pdf_convert(
+  in_path = file.path(image_dir, "precip_scatter.pdf"),
+  out_paths = file.path(image_dir, "precip_scatter.png"),
+  format = "png"
+)
 
 # Create a map plot for skill scores between the full model and ERA5
 # ------------------------------------------------------------------------------

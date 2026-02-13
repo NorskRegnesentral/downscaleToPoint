@@ -652,9 +652,6 @@ plot = bootstrap_data |>
   _[data_type1 == "cprcm"] |>
   _[data_type0 %in% c("full", "era", "cprcm")] |>
   _[, let(
-    #truth = pmax(-2.6, truth),
-    #lower = pmax(-2.6, lower),
-    #upper = pmax(-2.6, upper),
     data_type0 = factor(
       data_type0,
       levels = rev(c("full", "local", "global", "era", "cprcm")),
@@ -689,6 +686,139 @@ plot = bootstrap_data |>
 # Save the ggplot so we can combine it with a similar temperature plot
 # in cprcm_temp_comparison.R
 saveRDS(plot, file.path(image_dir, "precip_scores_cprcm.rds"))
+
+# ==============================================================================
+# Create (skill) score scatter plots
+# ==============================================================================
+
+# we can look at skill on the y-axis against distance-to-sea, elevation, climatology
+# we can also plot scores for the full model on the y-axis and for ERA on the x-axis
+
+data_types = c("full", "cprcm")
+
+score_data = list()
+for (i in seq_len(nrow(score_info))) {
+  score_data[[i]] = get_scores(
+    data = eval,
+    score_name = score_info$name[i],
+    data_types = data_types,
+    K_vals = K,
+    row_index = score_info$row_index[i]
+  )
+  score_data[[i]]$score_name = score_info$shortname[i]
+}
+score_data = rbindlist(score_data)
+score_data = merge(score_data, meta[, .(id, lon, lat, elev, elev_mean)], by = "id")
+score_data[, let(elev_diff = elev - elev_mean)]
+
+# Add distance to the sea
+# ------------------------------------------------------------------------------
+land_mask_path = file.path(data_dir, "era-land-mask.nc")
+nc = ncdf4::nc_open(land_mask_path)
+land_mask = ncdf4::ncvar_get(nc, "lsm")
+land_mask_lon = ncdf4::ncvar_get(nc, "longitude")
+land_mask_lon[land_mask_lon > 180] = land_mask_lon[land_mask_lon > 180] - 360
+land_mask_lat = ncdf4::ncvar_get(nc, "latitude")
+ncdf4::nc_close(nc)
+
+get_dist_to_sea = function(lon, lat) {
+  max_dist = .5
+  while (TRUE) {
+    lon_index = which(abs(land_mask_lon - lon) < max_dist)
+    lat_index = which(abs(land_mask_lat - lat) < max_dist)
+    land_mask_selection = land_mask[lon_index, lat_index]
+    if (any(land_mask_selection < .1)) break
+    max_dist = max_dist * 2
+  }
+  land_mask_coords = expand.grid(lon = land_mask_lon[lon_index], lat = land_mask_lat[lat_index])
+  distances = geosphere::distHaversine(c(lon, lat), land_mask_coords)
+  distances_to_sea_cells = distances[land_mask_selection < .3]
+  min(distances_to_sea_cells)
+}
+
+score_data[, let(dist_to_sea = get_dist_to_sea(lon[1], lat[1])), by = c("lon", "lat")]
+
+# Add precipitation climatologies
+# ------------------------------------------------------------------------------
+
+precip_means = parallel::mclapply(
+  X = seq_len(nrow(meta)),
+  mc.cores = 8,
+  mc.preschedule = FALSE,
+  FUN = function(i) {
+    if (i %% 100 == 0) message(i, " / ", nrow(meta))
+    data = load_station_data(
+      meta = meta[i],
+      data_dir = data_dir,
+      verbose = FALSE,
+      rm_na = FALSE
+    )
+    data.table(
+      id = meta$id[i],
+      precip_mean = mean(data$era_precip, na.rm = TRUE)
+    )
+  }
+)
+precip_means = rbindlist(precip_means)
+
+score_data = merge(score_data, precip_means, by = "id")
+score_data$precip_yearly_sum = score_data$precip_mean * 365
+
+# Create the actual scatter plots
+# ------------------------------------------------------------------------------
+
+# Skill scatter plots with different variables along the x-axis
+x_vars = c("elev", "elev_diff", "dist_to_sea", "precip_mean")
+for (x_var in x_vars) {
+  plot_data = score_data |>
+    dcast(... ~ data_type, value.var = "value") |>
+    _[, let(skill = skill_score(full, cprcm))]
+  if (x_var == "elev_diff") plot_data[[x_var]] = abs(plot_data[[x_var]])
+  plot = ggplot(plot_data) +
+    geom_point(aes(x = !!sym(x_var), y = skill), alpha = .2) +
+    geom_smooth(aes(x = !!sym(x_var), y = skill)) +
+    labs(x = x_var, y = "Skill") +
+    facet_wrap(~score_name, scales = "free_y", ncol = 5) +
+    theme_light() +
+    lims(y = c(-1, 1)) +
+    theme(
+      strip.text = element_text(colour = "black"),
+      strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0")
+    )
+  png(
+    filename = file.path(image_dir, paste0("cprcm-skill-vs-", x_var, ".png")),
+    width = 10, height = 6, units = "in", res = 150
+  )
+  print(plot)
+  dev.off()
+}
+
+# full model score scatter plots with different variables along the x-axis
+x_vars = c("elev", "elev_diff", "dist_to_sea", "precip_mean")
+for (x_var in x_vars) {
+  plot_data = score_data |>
+    dcast(... ~ data_type, value.var = "value") |>
+    _[, let(upper = quantile(cprcm, .998)), by = "score_name"] |>
+    _[cprcm <= upper]
+  if (x_var == "elev_diff") plot_data[[x_var]] = abs(plot_data[[x_var]])
+  plot = ggplot(plot_data) +
+    geom_point(aes(x = !!sym(x_var), y = cprcm), alpha = .2) +
+    geom_smooth(aes(x = !!sym(x_var), y = cprcm)) +
+    labs(x = x_var, y = "Skill") +
+    facet_wrap(~score_name, scales = "free_y", ncol = 5) +
+    theme_light() +
+    theme(
+      strip.text = element_text(colour = "black"),
+      strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0")
+    )
+  png(
+    filename = file.path(image_dir, paste0("cprcm-score-vs-", x_var, ".png")),
+    width = 10, height = 6, units = "in", res = 150
+  )
+  print(plot)
+  dev.off()
+}
+
 
 # Create a map plot for skill scores between the full model and ERA5
 # ------------------------------------------------------------------------------

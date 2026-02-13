@@ -975,14 +975,43 @@ for (x_var in x_vars) {
   dev.off()
 }
 
-"Temperature:"
-"We see a strong correlation between several skill scores and elev_diff"
-"We don't see that for the MS score."
-"When we look at tmean_mean, then the correlations are stronger for MS, and weaker for RMSE."
-"So we could show both and use that to talk about how nice it is to use multiple scores."
+x_vars = c("elev_diff", "tmean_mean")
+pretty_names = c("Absolute elevation difference [m]", "Mean annual ERA5 temperature [$^\\circ$C]")
+plots = list()
+for (i in seq_along(x_vars)) {
+  x_var = x_vars[i]
+  plot_data = score_data |>
+    dcast(... ~ data_type, value.var = "value") |>
+    _[, let(skill = skill_score(full, era))] |>
+    _[score_name %in% c("MS", "RMSE", "MAE")]
+  if (x_var == "elev_diff") plot_data[[x_var]] = abs(plot_data[[x_var]])
+  plots[[i]] = ggplot(plot_data) +
+    geom_point(aes(x = !!sym(x_var), y = skill), alpha = .2) +
+    #geom_smooth(aes(x = !!sym(x_var), y = skill)) +
+    labs(x = pretty_names[i], y = "Skill score") +
+    facet_wrap(~score_name, scales = "free_y") +
+    theme_light() +
+    lims(y = c(-1, 1)) +
+    theme(
+      strip.text = element_text(colour = "black"),
+      strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0")
+    )
+}
+plot = patchwork::wrap_plots(plots, ncol = 1)
 
-"Precip:
-We see a strong correlation between raw MAE/RMSE scores and precip totals, but when we look at skill scores, this is gone. This shows that RMSE/MAE basicly are proxies for precipitation totals, and that looking at skills instead of raw scores fixes some of the problems"
+plot_tikz(
+  plot = plot,
+  file = file.path(image_dir, "temp_scatter.pdf"),
+  width = 8,
+  height = 5,
+  tex_engine = "lualatex"
+)
+
+pdf_convert(
+  in_path = file.path(image_dir, "temp_scatter.pdf"),
+  out_paths = file.path(image_dir, "temp_scatter.png"),
+  format = "png"
+)
 
 # Create a map plot for skill scores between the full model and ERA5
 # ------------------------------------------------------------------------------
