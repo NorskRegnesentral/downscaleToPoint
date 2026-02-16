@@ -830,7 +830,7 @@ for (K in c(10, K_vals)) { # This is just to get the results for K = 10 as fast 
       # This is super hacky!
       local_fits$dry_to_wet = local_fits$dry_to_wet2
       local_fits$wet_to_wet = local_fits$wet_to_wet2
-      
+
       sims$full2 = simulate_precip_with_donors(
         n_sims = n_sims,
         data = data,
@@ -855,12 +855,14 @@ for (K in c(10, K_vals)) { # This is just to get the results for K = 10 as fast 
       }
 
       # This is even more hacky
-      stop("I need to check the length of the occurrence offset! And I probably need to shift it!")
       local_fits$dry_to_wet = local_fits$dry_to_wet1
       local_fits$wet_to_wet = local_fits$wet_to_wet1
-      offsets$dry_to_wet = offsets$occurrence
-      offsets$wet_to_wet = offsets$occurrence
-      local_fits$occurrence_prob = offsets$occurrence[1]
+      offsets$dry_to_wet = tail(offsets$occurrence, -1)
+      offsets$wet_to_wet = tail(offsets$occurrence, -1)
+      local_fits$occurrence_prob = rep(
+        global_fit$occurrence$family$linkinv(offsets$occurrence[1]),
+        K
+      )
 
       sims$full1 = simulate_precip_with_donors(
         n_sims = n_sims,
