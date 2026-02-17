@@ -694,8 +694,7 @@ global_fit = readRDS(global_fit_path)
 # Loop over all weather stations for all values of K, simulate data and
 # compute all scoring functions of interest. This takes a lot of time
 start_time = Sys.time()
-#for (K in K_vals) {
-for (K in c(10, K_vals)) { # This is just to get the results for K = 10 as fast as possible.
+for (K in K_vals) {
   out_dir = file.path(cv_dir, paste0(K, "_neighbours"))
   if (!dir.exists(out_dir)) dir.create(out_dir)
   parallel::mclapply(
@@ -1233,7 +1232,7 @@ plot_tikz(
 # ------------------------------------------------------------------------------
 
 chosen_K = 15
-data_types = c("era", "local", "full", "global")
+data_types = c("era", "local", "full1", "global")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
 bootstrap_data = list()
@@ -1255,16 +1254,16 @@ plot = bootstrap_data[
 ][
   !(data_type0 == "local" & data_type1 %in% c("era", "global"))
 ][
-  !data_type0 == "full"
+  !data_type0 == "full1"
 ][, let(
   data_type1 = factor(
     data_type1,
-    levels = rev(c("full", "local", "global", "era")),
+    levels = rev(c("full1", "local", "global", "era")),
     labels = rev(c("Full", "Local", "Global", "ERA5"))
   ),
   data_type0 = factor(
     data_type0,
-    levels = rev(c("full", "local", "global", "era")),
+    levels = rev(c("full1", "local", "global", "era")),
     labels = rev(paste("$S_0$:", c("Full", "Local", "Global", "ERA5")))
   ),
   score_name = factor(score_name, levels = score_info$shortname)
@@ -1306,7 +1305,7 @@ plot_tikz(
 # we can look at skill on the y-axis against distance-to-sea, elevation, climatology
 # we can also plot scores for the full model on the y-axis and for ERA on the x-axis
 
-data_types = c("full", "era")
+data_types = c("full1", "era")
 
 score_data = list()
 for (i in seq_len(nrow(score_info))) {
@@ -1384,7 +1383,7 @@ x_vars = c("elev", "elev_diff", "dist_to_sea", "era", "precip_mean")
 for (x_var in x_vars) {
   plot_data = score_data |>
     dcast(... ~ data_type, value.var = "value") |>
-    _[, let(skill = skill_score(full, era))]
+    _[, let(skill = skill_score(full1, era))]
   x_var_scales = ifelse(x_var == "era", "free", "free_y")
   if (x_var == "elev_diff") plot_data[[x_var]] = abs(plot_data[[x_var]])
   plot = ggplot(plot_data) +
@@ -1411,13 +1410,13 @@ x_vars = c("elev", "elev_diff", "dist_to_sea", "era", "precip_mean")
 for (x_var in x_vars) {
   plot_data = score_data |>
     dcast(... ~ data_type, value.var = "value") |>
-    _[, let(upper = quantile(full, .998)), by = "score_name"] |>
-    _[full <= upper]
+    _[, let(upper = quantile(full1, .998)), by = "score_name"] |>
+    _[full1 <= upper]
   x_var_scales = ifelse(x_var == "era", "free", "free_y")
   if (x_var == "elev_diff") plot_data[[x_var]] = abs(plot_data[[x_var]])
   plot = ggplot(plot_data) +
-    geom_point(aes(x = !!sym(x_var), y = full), alpha = .2) +
-    geom_smooth(aes(x = !!sym(x_var), y = full)) +
+    geom_point(aes(x = !!sym(x_var), y = full1), alpha = .2) +
+    geom_smooth(aes(x = !!sym(x_var), y = full1)) +
     labs(x = x_var, y = "Skill") +
     facet_wrap(~score_name, scales = x_var_scales, ncol = 5) +
     theme_light() +
@@ -1433,18 +1432,18 @@ for (x_var in x_vars) {
   dev.off()
 }
 
-y_vars = c("full", "skill")
+y_vars = c("full1", "skill")
 pretty_names = c("Score", "Skill score")
 plots = list()
 for (i in seq_along(y_vars)) {
   y_var = y_vars[i]
   plot_data = score_data |>
     dcast(... ~ data_type, value.var = "value") |>
-    _[, let(skill = skill_score(full, era))] |>
+    _[, let(skill = skill_score(full1, era))] |>
     _[score_name %in% c("MS", "RMSE", "MAE")]
-  if (y_var == "full") {
-    plot_data[, let(upper = quantile(full, .998)), by = "score_name"]
-    plot_data = plot_data[full < upper]
+  if (y_var == "full1") {
+    plot_data[, let(upper = quantile(full1, .998)), by = "score_name"]
+    plot_data = plot_data[full1 < upper]
   }
   plots[[i]] = ggplot(plot_data) +
     geom_point(aes(x = precip_yearly_sum, y = !!sym(y_var)), alpha = .2) +
@@ -1477,7 +1476,7 @@ pdf_convert(
 # Create a map plot for skill scores between the full model and ERA5
 # ------------------------------------------------------------------------------
 
-data_types = c("full", "era")
+data_types = c("full1", "era")
 
 score_data = list()
 for (i in seq_len(nrow(score_info))) {
@@ -1495,7 +1494,7 @@ score_data = merge(score_data, station_meta[, .(id, lon, lat)], by = "id")
 
 score_data = dcast(score_data, ... ~ data_type, value.var = "value")
 
-score_data[, let(scores = lapply(seq_len(.N), function(i) c(full[i], era[i])))]
+score_data[, let(scores = lapply(seq_len(.N), function(i) c(full1[i], era[i])))]
 
 my_hex_func = function(x) {
   s1 = mean(sapply(x, `[[`, 1))
@@ -1570,15 +1569,15 @@ pdf_convert(
 
 rmse_data = as.data.table(do.call(rbind, eval[K == chosen_K, rmse]))
 mae_data = as.data.table(do.call(rbind, eval[K == chosen_K, mae]))
-rmse_data = rmse_data[, .(full, era)][, let(id = eval[K == chosen_K, id], tag = "rmse")]
-mae_data = mae_data[, .(full, era)][, let(id = eval[K == chosen_K, id], tag = "mae")]
+rmse_data = rmse_data[, .(full1, era)][, let(id = eval[K == chosen_K, id], tag = "rmse")]
+mae_data = mae_data[, .(full1, era)][, let(id = eval[K == chosen_K, id], tag = "mae")]
 
 plot_data = rbind(
   melt(rmse_data, id.vars = c("id", "tag")),
   melt(mae_data, id.vars = c("id", "tag"))
 )
 plot_data[, let(
-  both = list(c(value[variable == "full"], value[variable == "era"]))
+  both = list(c(value[variable == "full1"], value[variable == "era"]))
 ), by = c("id", "tag")]
 plot_data = merge(
   plot_data,
@@ -1617,7 +1616,7 @@ plot_data$lat = st_coordinates(plot_data)[, 2]
 plot_data$tag = factor(plot_data$tag, levels = score_info$name, labels = score_info$shortname)
 plot_data$variable = factor(
   plot_data$variable,
-  levels = c("full", "era"),
+  levels = c("full1", "era"),
   labels = c("Full", "ERA5")
 )
 
@@ -1653,7 +1652,7 @@ for (t in unique(plot_data$tag)) {
            title = paste0(v, ", ", t)) +
       scale_fill_viridis_c(
         option = if (t == "MAE") "D" else "D",
-        limits = if (t == "MAE") c(0, 5) else c(2, 13),
+        limits = if (t == "MAE") c(0, 6) else c(2, 13),
         breaks = seq(0, 20, by = 2)
       )
   }
@@ -1847,6 +1846,16 @@ time_series_data = lapply(
       }
     }
 
+    # This is a very hacky way of choosing the model we want
+    local_fits$dry_to_wet = local_fits$dry_to_wet1
+    local_fits$wet_to_wet = local_fits$wet_to_wet1
+    offsets$dry_to_wet = tail(offsets$occurrence, -1)
+    offsets$wet_to_wet = tail(offsets$occurrence, -1)
+    local_fits$occurrence_prob = rep(
+      global_fit$occurrence$family$linkinv(offsets$occurrence[1]),
+      chosen_K
+    )
+
     # Simulate precipitation data using the full model, including both local GAMs and ARMA models
     sims = simulate_precip_with_donors(
       n_sims = n_sims,
@@ -1966,4 +1975,3 @@ pdf_convert(
   out_paths = file.path(image_dir, "precip_time_series.png"),
   format = "png"
 )
-

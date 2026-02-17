@@ -175,6 +175,16 @@ success = parallel::mclapply(
         }
       }
 
+      # Very hacky solution to get what we want...
+      local_fits$dry_to_wet = local_fits$dry_to_wet1
+      local_fits$wet_to_wet = local_fits$wet_to_wet1
+      offsets$dry_to_wet = tail(offsets$occurrence, -1)
+      offsets$wet_to_wet = tail(offsets$occurrence, -1)
+      local_fits$occurrence_prob = rep(
+        global_fit$occurrence$family$linkinv(offsets$occurrence[1]),
+        K
+      )
+
       sim = simulate_precip_with_donors(
         n_sims = n_sims,
         data = local_obs,

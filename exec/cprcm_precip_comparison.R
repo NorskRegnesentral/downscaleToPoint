@@ -235,9 +235,13 @@ success = parallel::mclapply(
       )
     }
 
+    # This is super hacky!
+    local_fits$dry_to_wet = local_fits$dry_to_wet2
+    local_fits$wet_to_wet = local_fits$wet_to_wet2
+
     # Simulate precipitation data using the full model,
     # which has time dependence for both intensity and occurrence
-    sims$full = simulate_precip_with_donors(
+    sims$full2 = simulate_precip_with_donors(
       n_sims = n_sims,
       data = data,
       local_fits = local_fits,
@@ -248,9 +252,42 @@ success = parallel::mclapply(
 
     # Check if any of the donor stations appear to be outliers and
     # Remove them if this is the case
-    bad_full_donors = get_bad_donor_index(sims$full, mean, K)
+    bad_full_donors = get_bad_donor_index(sims$full2, mean, K)
     if (length(bad_full_donors) > 0) {
-      sims$full = simulate_precip_with_donors(
+      sims$full2 = simulate_precip_with_donors(
+        n_sims = n_sims,
+        data = data,
+        local_fits = local_fits[-bad_full_donors],
+        offsets = offsets,
+        intensity_time_dep = TRUE,
+        occurrence_time_dep = TRUE
+      )
+    }
+
+    # This is even more hacky
+    local_fits$dry_to_wet = local_fits$dry_to_wet1
+    local_fits$wet_to_wet = local_fits$wet_to_wet1
+    offsets$dry_to_wet = tail(offsets$occurrence, -1)
+    offsets$wet_to_wet = tail(offsets$occurrence, -1)
+    local_fits$occurrence_prob = rep(
+      global_fit$occurrence$family$linkinv(offsets$occurrence[1]),
+      K
+    )
+
+    sims$full1 = simulate_precip_with_donors(
+      n_sims = n_sims,
+      data = data,
+      local_fits = local_fits,
+      offsets = offsets,
+      intensity_time_dep = TRUE,
+      occurrence_time_dep = TRUE
+    )
+
+    # Check if any of the donor stations appear to be outliers and
+    # Remove them if this is the case
+    bad_full_donors = get_bad_donor_index(sims$full1, mean, K)
+    if (length(bad_full_donors) > 0) {
+      sims$full1 = simulate_precip_with_donors(
         n_sims = n_sims,
         data = data,
         local_fits = local_fits[-bad_full_donors],
@@ -611,7 +648,6 @@ success = parallel::mclapply(
       cprcm = monthly_sd_cprcm_iqd,
       era = monthly_sd_era_iqd,
       monthly_sd_sim_iqd))
-
 
     # Save the results
     saveRDS(res, out_path)
