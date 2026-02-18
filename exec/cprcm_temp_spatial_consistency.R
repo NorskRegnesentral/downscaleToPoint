@@ -13,15 +13,13 @@ library(patchwork)
 library(abind)
 library(downscaleToPoint)
 
-stop("I need to change this and make it similar to the precip version!")
-
 # Define all necessary paths
 # ------------------------------------------------------------------------------
 data_dir = "/nr/samba/user/smvandeskog/projects/downscaleToPoint/data/"
 model_dir = file.path(data_dir, "models", "temperature")
-image_dir = file.path(data_dir, "images", "temperature")
+image_dir = file.path(data_dir, "images", "temperature_cprcm")
 local_fits_dir = file.path(model_dir, "local_fits")
-out_dir = file.path(data_dir, "spatial_consistency", "temperature")
+out_dir = file.path(data_dir, "spatial_consistency", "temperature_cprcm")
 
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 
@@ -66,14 +64,27 @@ station_meta = readRDS(meta_path)
 station_meta = station_meta[n_tmean > 200]
 
 # ==============================================================================
+# CPRCM stuff
+# ==============================================================================
+
+cprcm_lon_range = c(-1.7374, 18.6974)
+cprcm_lat_range = c(39.083, 50.3347)
+
+meta = station_meta |>
+  _[lon < cprcm_lon_range[2] - 1] |>
+  _[lon > cprcm_lon_range[1] + 1] |>
+  _[lat < cprcm_lat_range[2] - 1] |>
+  _[lat > cprcm_lat_range[1] + 1]
+
+# ==============================================================================
 # Evaluation
 # ==============================================================================
 
 global_fit = readRDS(global_fit_path)
 
 start_time = Sys.time()
-parallel::mclapply(
-  X = seq_len(nrow(station_meta)),
+success = parallel::mclapply(
+  X = seq_len(nrow(meta)),
   mc.cores = n_cores,
   mc.preschedule = FALSE,
   FUN = function(i) {
@@ -83,26 +94,26 @@ parallel::mclapply(
     # Print our progress so far
     time_passed = Sys.time() - start_time
     message(
-      "Starting on iter nr. ", i, " / ", nrow(station_meta),
+      "Starting on iter nr. ", i, " / ", nrow(meta),
       ". Time passed: ", round(as.numeric(time_passed), 2), " ", attr(time_passed, "units")
     )
 
-    out_path = file.path(out_dir, paste0(station_meta$id[i], ".rds"))
+    out_path = file.path(out_dir, paste0(meta$id[i], ".rds"))
     if (!overwrite && file.exists(out_path)) return(TRUE)
 
     # Compute distances to all other weather stations
     dists = geosphere::distHaversine(
-      p1 = station_meta[i, c(lon, lat)],
-      p2 = station_meta[, cbind(lon, lat)]
+      p1 = meta[i, c(lon, lat)],
+      p2 = meta[, cbind(lon, lat)]
     )
 
     # Locate all stations that are closer than neighbour_radius
-    neighbouring_ids = station_meta$id[dists <= neighbour_radius]
+    neighbouring_ids = meta$id[dists <= neighbour_radius]
     n_neighbouring_ids = length(neighbouring_ids)
 
     # Load data for all these stations
     obs = load_station_data(
-      meta = station_meta[id %in% neighbouring_ids],
+      meta = meta[id %in% neighbouring_ids],
       data_dir = data_dir,
       rm_na = FALSE
     )
@@ -116,6 +127,20 @@ parallel::mclapply(
 
     obs_ids = unique(obs$id)
     obs_dates = sort(unique(obs$date))
+
+    # Load the CPRCM data
+    cprcm_data = lapply(
+      X = obs_ids,
+      FUN = function(id) {
+        out = readRDS(file.path(data_dir, "cprcm", paste0(id, ".rds")))
+        out[date %in% obs_dates, .(date, cprcm_tmean = temperature, id = id)]
+      })
+    cprcm_data = rbindlist(cprcm_data)
+
+    obs = merge(obs, cprcm_data, by = c("id", "date"))
+    obs_ids = unique(obs$id)
+    obs_dates = sort(unique(obs$date))
+    if (nrow(obs) == 0) return (FALSE)
 
     # Fill in extra rows with NAs, so obs has the same number of rows/dates for all ids
     obs = merge(
@@ -141,7 +166,7 @@ parallel::mclapply(
     for (j in seq_along(obs_ids)) {
       # Compute distances to all other weather stations
       dists = geosphere::distHaversine(
-        p1 = station_meta[id == obs_ids[j], c(lon, lat)],
+        p1 = meta[id == obs_ids[j], c(lon, lat)],
         p2 = station_meta[, cbind(lon, lat)]
       )
 
@@ -218,6 +243,14 @@ parallel::mclapply(
       max = max(era_tmean, na.rm = TRUE)
     ), by = "date"][order(date)]
 
+    cprcm_stats = obs[, .(
+      mean = mean(cprcm_tmean, na.rm = TRUE),
+      median = median(cprcm_tmean, na.rm = TRUE),
+      sd = sd(cprcm_tmean, na.rm = TRUE),
+      min = min(cprcm_tmean, na.rm = TRUE),
+      max = max(cprcm_tmean, na.rm = TRUE)
+    ), by = "date"][order(date)]
+
     # Evaluate the performance of the spatial stat ensembles
     res = list()
     for (name in names(sim_stats)) {
@@ -229,7 +262,7 @@ parallel::mclapply(
       sim_quantiles = matrixStats::rowQuantiles(sim_stats[[name]], probs = c(.025, .05, .95, .975))
 
       res[[name]] = data.table(
-        id = station_meta$id[i],
+        id = meta$id[i],
         stat = name,
         n_obs = nrow(obs_stats),
         n_neighbour_max = max(obs_stats$n_stations),
@@ -247,19 +280,22 @@ parallel::mclapply(
       mean_sim = matrixStats::rowMeans2(sim_stats[[name]])
       sim_rmse = rmse(obs_stats[[name]], mean_sim)
       era_rmse = rmse(obs_stats[[name]], era_stats[[name]])
-      res[[name]]$rmse = list(c(era = era_rmse, sim = sim_rmse))
+      cprcm_rmse = rmse(obs_stats[[name]], cprcm_stats[[name]])
+      res[[name]]$rmse = list(c(era = era_rmse, cprcm = cprcm_rmse, sim = sim_rmse))
 
       # Compare the ensemble median and ERA5 with the observed data, using MAE
       mae = function(x, y, ...) mean(abs(x - y), ...)
       median_sim = matrixStats::rowMedians(sim_stats[[name]])
       sim_mae = mae(obs_stats[[name]], median_sim)
       era_mae = mae(obs_stats[[name]], era_stats[[name]])
-      res[[name]]$mae = list(c(era = era_mae, sim = sim_mae))
+      cprcm_mae = mae(obs_stats[[name]], cprcm_stats[[name]])
+      res[[name]]$mae = list(c(era = era_mae, cprcm = cprcm_mae, sim = sim_mae))
 
       # Compare marginal distributions of all daily temperature means
       sims_iqd = iqd(as.vector(obs_stats[[name]]), sim_stats[[name]])
       era_iqd = iqd(obs_stats[[name]], era_stats[[name]])
-      res[[name]]$iqd = list(c(era = era_iqd, sim = sims_iqd))
+      cprcm_iqd = iqd(obs_stats[[name]], cprcm_stats[[name]])
+      res[[name]]$iqd = list(c(era = era_iqd, cprcm = cprcm_iqd, sim = sims_iqd))
 
       # Compute quantile scores
       quantile_score = function(prob, pred, obs) {
@@ -272,19 +308,31 @@ parallel::mclapply(
         pred = era_stats[[name]],
         obs = obs_stats[[name]]
       )
+      cprcm_quantile_score = sapply(
+        X = threshold_probs,
+        FUN = quantile_score,
+        pred = cprcm_stats[[name]],
+        obs = obs_stats[[name]]
+      )
       sims_quantile_score = sapply(
         X = threshold_probs,
         FUN = quantile_score,
         pred = sim_stats[[name]],
         obs = obs_stats[[name]]
       )
-      res[[name]]$quantile_score = list(cbind(era = era_quantile_score, sim = sims_quantile_score))
+      res[[name]]$quantile_score = list(cbind(
+        era = era_quantile_score,
+        cprcm = cprcm_quantile_score,
+        sim = sims_quantile_score
+      ))
     }
     res = data.table::rbindlist(res)
 
     # Save the results
     saveRDS(res, out_path)
   })
+
+unlist(success) |> table()
 
 # ==============================================================================
 # Load and evaluate the results
@@ -304,7 +352,7 @@ eval$K = K # This is stupid, but necessary for bootstrap_skillscores()
 
 stat_names = unique(eval$stat)
 
-data_types = c("era", "sim")
+data_types = c("era", "cprcm", "sim")
 bootstrap_data = list()
 for (i in seq_len(nrow(score_info))) {
   set.seed(base_seed + i * seed_jump)
@@ -336,7 +384,8 @@ plot = bootstrap_data[data_type1 == "sim"] |>
   _[, let(
     truth = pmax(truth, -1),
     lower = pmax(lower, -1),
-    upper = pmax(upper, -1)
+    upper = pmax(upper, -1),
+    data_type0 = factor(data_type0, levels = c("cprcm", "era"), labels = c("CPRCM", "ERA5"))
   )] |>
   ggplot() +
   geom_hline(yintercept = 0) +
@@ -351,6 +400,7 @@ plot = bootstrap_data[data_type1 == "sim"] |>
   ) +
   scale_y_continuous(breaks = seq(-10, 1, by = .2), limits = c(-1, 1)) +
   theme_light() +
+  facet_wrap(~data_type0) +
   theme(
     strip.text = element_text(colour = "black", size = rel(1)),
     strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0"),
@@ -361,11 +411,8 @@ plot = bootstrap_data[data_type1 == "sim"] |>
   labs(x = "Scoring function", y = "$\\tilde S_{\\text{skill}}(S_1, S_0)$", col = "Statistic")
 
 plot_tikz(
-  file = file.path(image_dir, "temp_spatial_consistency_scores.pdf"),
+  file = file.path(image_dir, "cprcm_temp_spatial_consistency_scores.pdf"),
   plot = plot,
-  width = 8,
+  width = 10,
   height = 5
 )
-
-"Maybe add a title, so we can combine this with the temperature scores in a nice way?"
-

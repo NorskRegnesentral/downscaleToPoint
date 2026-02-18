@@ -17,7 +17,7 @@ library(downscaleToPoint)
 # ------------------------------------------------------------------------------
 data_dir = "/nr/samba/user/smvandeskog/projects/downscaleToPoint/data/"
 model_dir = file.path(data_dir, "models", "precipitation")
-image_dir = file.path(data_dir, "images", "precipitation")
+image_dir = file.path(data_dir, "images", "precipitation_cprcm")
 local_fits_dir = file.path(model_dir, "local_fits")
 out_dir = file.path(data_dir, "spatial_consistency", "precipitation_cprcm")
 
@@ -395,7 +395,7 @@ eval$K = K # This is stupid, but necessary for bootstrap_skillscores()
 
 stat_names = unique(eval$stat)
 
-data_types = c("era", "sim")
+data_types = c("era", "cprcm", "sim")
 bootstrap_data = list()
 for (i in seq_len(nrow(score_info))) {
   set.seed(base_seed + i * seed_jump)
@@ -427,7 +427,8 @@ plot = bootstrap_data[data_type1 == "sim"] |>
   _[, let(
     truth = pmax(truth, -1),
     lower = pmax(lower, -1),
-    upper = pmax(upper, -1)
+    upper = pmax(upper, -1),
+    data_type0 = factor(data_type0, levels = c("cprcm", "era"), labels = c("CPRCM", "ERA5"))
   )] |>
   ggplot() +
   geom_hline(yintercept = 0) +
@@ -446,6 +447,7 @@ plot = bootstrap_data[data_type1 == "sim"] |>
     expand = c(0, 0)
   ) +
   theme_light() +
+  facet_wrap(~data_type0) +
   theme(
     strip.text = element_text(colour = "black", size = rel(1)),
     strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0"),
@@ -458,6 +460,6 @@ plot = bootstrap_data[data_type1 == "sim"] |>
 plot_tikz(
   file = file.path(image_dir, "cprcm_precip_spatial_consistency_scores.pdf"),
   plot = plot,
-  width = 8,
+  width = 10,
   height = 5
 )

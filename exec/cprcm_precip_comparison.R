@@ -667,7 +667,7 @@ eval = rbindlist(eval, fill = TRUE)
 # Add the zero prob squared error score to eval
 eval$zero_probs_se = lapply(eval$zero_probs, function(x) (x[, -1] - x[, 1])^2)
 
-data_types = c("era", "local", "full", "global", "cprcm")
+data_types = c("era", "local", "full1", "global", "cprcm")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
 bootstrap_data = list()
@@ -686,11 +686,11 @@ bootstrap_data = rbindlist(bootstrap_data)
 
 plot = bootstrap_data |>
   _[data_type1 == "cprcm"] |>
-  _[data_type0 %in% c("full", "era", "cprcm")] |>
+  _[data_type0 %in% c("full1", "era", "cprcm")] |>
   _[, let(
     data_type0 = factor(
       data_type0,
-      levels = rev(c("full", "local", "global", "era", "cprcm")),
+      levels = rev(c("full1", "local", "global", "era", "cprcm")),
       labels = rev(c("Full", "Local", "Global", "ERA5", "CPRCM"))
     ),
     data_type1 = "Precipitation",
@@ -730,7 +730,7 @@ saveRDS(plot, file.path(image_dir, "precip_scores_cprcm.rds"))
 # we can look at skill on the y-axis against distance-to-sea, elevation, climatology
 # we can also plot scores for the full model on the y-axis and for ERA on the x-axis
 
-data_types = c("full", "cprcm")
+data_types = c("full1", "cprcm")
 
 score_data = list()
 for (i in seq_len(nrow(score_info))) {
@@ -808,7 +808,7 @@ x_vars = c("elev", "elev_diff", "dist_to_sea", "precip_mean")
 for (x_var in x_vars) {
   plot_data = score_data |>
     dcast(... ~ data_type, value.var = "value") |>
-    _[, let(skill = skill_score(full, cprcm))]
+    _[, let(skill = skill_score(full1, cprcm))]
   if (x_var == "elev_diff") plot_data[[x_var]] = abs(plot_data[[x_var]])
   plot = ggplot(plot_data) +
     geom_point(aes(x = !!sym(x_var), y = skill), alpha = .2) +
@@ -859,7 +859,7 @@ for (x_var in x_vars) {
 # Create a map plot for skill scores between the full model and ERA5
 # ------------------------------------------------------------------------------
 
-data_types = c("full", "cprcm")
+data_types = c("full1", "cprcm")
 
 score_data = list()
 for (i in seq_len(nrow(score_info))) {
@@ -877,7 +877,7 @@ score_data = merge(score_data, station_meta[, .(id, lon, lat)], by = "id")
 
 score_data = dcast(score_data, ... ~ data_type, value.var = "value")
 
-score_data[, let(scores = lapply(seq_len(.N), function(i) c(cprcm[i], full[i])))]
+score_data[, let(scores = lapply(seq_len(.N), function(i) c(cprcm[i], full1[i])))]
 
 my_hex_func = function(x) {
   s1 = mean(sapply(x, `[[`, 1))
@@ -948,7 +948,7 @@ pdf_convert(
 # Create a map with some selected scoring functions
 # ------------------------------------------------------------------------------
 
-data_types = c("full", "cprcm")
+data_types = c("full1", "cprcm")
 
 score_data = list()
 for (i in seq_len(nrow(score_info))) {
@@ -983,7 +983,7 @@ precip_data = precip_data[, .(
 score_data = merge(score_data, precip_data[, .(id, precip, era_precip)], by = "id")
 
 score_data = dcast(score_data, ... ~ data_type, value.var = "value")
-score_data[, let(scores = lapply(seq_len(.N), function(i) c(cprcm[i], full[i])))]
+score_data[, let(scores = lapply(seq_len(.N), function(i) c(cprcm[i], full1[i])))]
 
 score_data = score_data[score_name %in% c("RMSE", "ZP1", "D1")]
 
