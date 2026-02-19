@@ -1173,7 +1173,7 @@ eval$zero_probs_se = lapply(eval$zero_probs, function(x) (x[, -1] - x[, 1])^2)
 
 # Which values of K and which models should we evaluate?
 chosen_Ks = c(5, 10, 15, 20, 25, 30)
-data_types = c("full")
+data_types = c("full1")
 
 # Compute bootstrapped confidence intervals for all the skill scores of interest
 bootstrap_data = list()
@@ -1193,7 +1193,7 @@ bootstrap_data = rbindlist(bootstrap_data)
 
 # Plot all of the different skill scores, with 95% confidence intervals
 plot = bootstrap_data[K1 > K0][K0 <= 15][K0 >= 10][, let(
-    data_type = factor(data_type, levels = c("full"), labels = c("Full")),
+    data_type = factor(data_type, levels = c("full1"), labels = c("Full")),
     K1 = factor(K1, levels = chosen_Ks, labels = paste0("$K = ", chosen_Ks, "$")),
     K0 = factor(K0, levels = chosen_Ks, labels = paste0("$S_0: K = ", chosen_Ks, "$")),
     score_name = factor(score_name, levels = score_info$shortname)
