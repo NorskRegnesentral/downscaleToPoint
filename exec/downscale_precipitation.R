@@ -1014,7 +1014,9 @@ for (K in K_vals) {
       # Compute all n-day differences for ERA
       era_diffs = lapply(
         diff_lengths,
-        function(j) tail(data_with_all_dates$era_precip, -j) - head(data_with_all_dates$era_precip, -j)
+        function(j) {
+          tail(data_with_all_dates$era_precip, -j) - head(data_with_all_dates$era_precip, -j)
+        }
       )
       # Compute all n-day differences for each simulated ensemble member
       non_na_index = which(!is.na(data_with_all_dates$precip))
