@@ -345,6 +345,76 @@ eval$K = K # This is stupid, but necessary for bootstrap_skillscores()
 
 stat_names = unique(eval$stat)
 
+
+# Examine calibration
+# ------------------------------------------------------------------------------
+
+plot_data = copy(eval)
+plot_data[, let(stat = factor(
+  stat,
+  levels = c("mean", "sd", "median", "min", "max"),
+  labels = c("Mean", "SD", "Median", "Min", "Max")
+))]
+
+plots = list()
+
+plots[[1]] = plot_data |>
+  copy() |>
+  _[, let(tag = "Rank mean")] |>
+  ggplot() +
+  geom_histogram(aes(x = rank_mean, y = after_stat(density))) +
+  #facet_grid(tag ~ stat) +
+  facet_wrap(~stat, nrow = 1) +
+  theme_light() +
+  labs(x = "Rank mean", y = "Density") +
+  theme(
+    strip.text = element_text(colour = "black"),
+    strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0")
+  ) +
+  geom_vline(xintercept = .5)
+
+plots[[2]] = plot_data |>
+  copy() |>
+  _[, let(tag = "Rank standard deviation")] |>
+  ggplot() +
+  geom_histogram(aes(x = rank_sd, y = after_stat(density))) +
+  #facet_grid(tag ~ stat) +
+  facet_wrap(~stat, nrow = 1) +
+  theme_light() +
+  labs(x = "Rank SD", y = "Density") +
+  theme(
+    strip.text = element_text(colour = "black"),
+    strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0")
+  ) +
+  geom_vline(xintercept = 1 / sqrt(12))
+
+plots[[3]] = plot_data |>
+  copy() |>
+  _[, let(tag = "$95\\%$ coverage")] |>
+  ggplot() +
+  geom_histogram(aes(x = coverage_95, y = after_stat(density))) +
+  #facet_grid(tag ~ stat) +
+  facet_wrap(~stat, nrow = 1) +
+  theme_light() +
+  labs(x = "$95\\%$ CI coverage", y = "Density") +
+  theme(
+    strip.text = element_text(colour = "black"),
+    strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0")
+  ) +
+  geom_vline(xintercept = .95)
+
+plot = patchwork::wrap_plots(plots, ncol = 1)
+
+plot_tikz(
+  file = file.path(image_dir, "precip_spatial_consistency.pdf"),
+  plot = plot,
+  width = 10,
+  height = 6
+)
+
+# Compare with ERA5
+# ------------------------------------------------------------------------------
+
 data_types = c("era", "sim")
 bootstrap_data = list()
 for (i in seq_len(nrow(score_info))) {
@@ -411,5 +481,3 @@ plot_tikz(
   width = 8,
   height = 5
 )
-
-"Maybe add a title, so we can combine this with the temperature scores in a nice way?"
