@@ -342,27 +342,13 @@ plots[[2]] = plot_data |>
   ) +
   geom_vline(xintercept = 1 / sqrt(12))
 
-plots[[3]] = plot_data |>
-  copy() |>
-  _[, let(tag = "$95\\%$ coverage")] |>
-  ggplot() +
-  geom_histogram(aes(x = coverage_95, y = after_stat(density))) +
-  facet_wrap(~stat, nrow = 1) +
-  theme_light() +
-  labs(x = "$95\\%$ CI coverage", y = "Density") +
-  theme(
-    strip.text = element_text(colour = "black"),
-    strip.background = element_rect(colour = "#f0f0f0", fill = "#f0f0f0")
-  ) +
-  geom_vline(xintercept = .95)
-
 plot = patchwork::wrap_plots(plots, ncol = 1)
 
 plot_tikz(
   file = file.path(image_dir, "temp_spatial_consistency.pdf"),
   plot = plot,
   width = 10,
-  height = 6
+  height = 5
 )
 
 
