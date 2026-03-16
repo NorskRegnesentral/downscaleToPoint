@@ -391,12 +391,13 @@ plot = bootstrap_data[data_type1 == "sim"] |>
   geom_hline(yintercept = 0) +
   geom_point(
     aes(x = score_name, y = truth, col = stat, group = stat),
-    position = position_dodge(.2),
-    size = rel(.8)
+    position = position_dodge(.4),
+    size = rel(1.5)
   ) +
   geom_errorbar(
     aes(x = score_name, ymin = lower, ymax = upper, col = stat, group = stat),
-    position = position_dodge(.2)
+    position = position_dodge(.4),
+    linewidth = rel(1.5)
   ) +
   scale_y_continuous(breaks = seq(-10, 1, by = .2), limits = c(-1, 1)) +
   theme_light() +
@@ -407,6 +408,7 @@ plot = bootstrap_data[data_type1 == "sim"] |>
     axis.text.x = element_text(size = rel(1.1), angle = 70, vjust = .5),
     text = element_text(size = 15)
   ) +
+  scale_color_viridis_d(option = "C", begin = .2, end = .9) +
   theme(legend.position = "top") +
   labs(x = "Scoring function", y = "$\\tilde S_{\\text{skill}}(S_1, S_0)$", col = "Statistic")
 

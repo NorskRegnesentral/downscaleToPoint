@@ -700,12 +700,13 @@ plot = bootstrap_data |>
   geom_hline(yintercept = 0) +
   geom_point(
     aes(x = score_name, y = truth, col = data_type0, group = data_type0),
-    position = position_dodge(.3),
-    size = rel(.8)
+    position = position_dodge(.5),
+    size = rel(1.5)
   ) +
   geom_errorbar(
     aes(x = score_name, ymin = lower, ymax = upper, col = data_type0, group = data_type0),
-    position = position_dodge(.3)
+    position = position_dodge(.5),
+    linewidth = rel(1.5)
   ) +
   facet_wrap(~data_type1, nrow = 1) +
   scale_y_continuous(breaks = seq(-10, 1, by = .2), limits = c(-1.4, .88), expand = c(0, 0)) +
@@ -716,6 +717,7 @@ plot = bootstrap_data |>
     axis.text.x = element_text(size = rel(1.1), angle = 70, vjust = .5),
     text = element_text(size = 15)
   ) +
+  scale_color_viridis_d(option = "C", begin = .2, end = .8) +
   theme(legend.position = "top") +
   labs(x = "Scoring function", y = "$\\tilde S_{\\text{skill}}(S_1, S_0)$", col = "$S_0$:")
 

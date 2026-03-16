@@ -417,6 +417,3 @@ plot_tikz(
   width = 8,
   height = 5
 )
-
-"Maybe add a title, so we can combine this with the temperature scores in a nice way?"
-
